@@ -210,7 +210,7 @@ def predict(
 
     dataset_root = Path(manifest.get("dataset_root") or ".").resolve()
     trained_model_allowed = (
-        not _is_demo_dataset(dataset_root)
+        not (_is_demo_dataset(dataset_root) or _is_demo_manifest(manifest))
         or allow_demo_model
         or _is_relative_to(image_path, dataset_root)
     )
@@ -864,6 +864,11 @@ def _clean_meta(value: Any) -> str | None:
 
 def _is_demo_dataset(path: Path) -> bool:
     return path.name.lower().startswith("sample_dataset")
+
+
+def _is_demo_manifest(manifest: dict[str, Any]) -> bool:
+    devices = (manifest.get("summary") or {}).get("devices", {})
+    return any("synthetic" in str(label).lower() for label in devices)
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

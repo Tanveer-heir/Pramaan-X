@@ -1,0 +1,16 @@
+.git
+.env
+**/.env
+**/.venv
+**/__pycache__
+**/.pytest_cache
+Detection/checkpoints
+Detection/models
+Detection/data
+CPH/data/cache
+CPH/data/graphs
+CPH/data/investigations
+CPH/data/shared_media
+prnu-device-attribution-api-handoff/dataset
+prnu-device-attribution-api-handoff/models
+prnu-device-attribution-api-handoff/runs

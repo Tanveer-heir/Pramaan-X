@@ -387,8 +387,9 @@ On Ubuntu:
 sudo apt-get update
 sudo apt-get install -y ffmpeg python3.12-venv
 
-git clone https://github.com/CheekyRishi/Pramaan-X.git
+git clone https://github.com/Tanveer-heir/Pramaan-X.git
 cd Pramaan-X
+cd Detection
 
 python3.12 -m venv .venv
 source .venv/bin/activate

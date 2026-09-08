@@ -40,8 +40,11 @@ from src.source_attribution.social_graph import (
 class SourceAttributionPipeline:
     """End-to-end pipeline for Origin Tracing and Account Attribution."""
 
-    def __init__(self):
-        self.keyframe_extractor = VideoKeyframeExtractor()
+    def __init__(self, output_dir: str = "data/graphs"):
+        self.output_dir = output_dir
+        self.keyframe_extractor = VideoKeyframeExtractor(
+            output_dir=os.path.join(output_dir, "keyframes")
+        )
         self.google_vision = GoogleVisionClient()
         self.yandex = YandexSearchClient()
         self.visual_search = VisualSearchConnector(max_results=50)
@@ -66,9 +69,10 @@ class SourceAttributionPipeline:
         keyframes = []
         if self.keyframe_extractor.is_video(media_path):
             keyframes = self.keyframe_extractor.extract_keyframes(media_path, sample_rate_sec=1.0)
-            if keyframes:
-                active_image_path = keyframes[0]["frame_path"]
-                logger.info("source_attribution.video_sampled", frames_count=len(keyframes))
+            if not keyframes:
+                raise ValueError("Video source attribution requires at least one decoded keyframe")
+            active_image_path = keyframes[0]["frame_path"]
+            logger.info("source_attribution.video_sampled", frames_count=len(keyframes))
 
         # 2. Vision Description via Gemini 2.5 Flash / Free Tier (§2.4d step 1)
         description = await self.descriptor.describe_media(active_image_path)
@@ -130,7 +134,7 @@ class SourceAttributionPipeline:
         event_context_str = event_profile.get("event_summary", description)
         logger.info(
             "source_attribution.event_context_discovered",
-            event=event_profile.get("event_name"),
+            event_name=event_profile.get("event_name"),
             date=event_profile.get("event_date"),
             confidence=event_profile.get("confidence")
         )
@@ -275,7 +279,7 @@ class SourceAttributionPipeline:
         )
 
         # 10. Export Interactive PyVis HTML Visualizations
-        graphs_dir = "data/graphs"
+        graphs_dir = self.output_dir
         os.makedirs(graphs_dir, exist_ok=True)
         SocialGraphBuilder.export_pyvis_html(
             social_graph,

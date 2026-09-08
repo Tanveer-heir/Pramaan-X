@@ -147,7 +147,7 @@ class QueryGenerator:
 
         logger.info(
             "llm.generate_event_queries",
-            event=event_name,
+            event_name=event_name,
             anchor=temporal_anchor
         )
 
@@ -187,4 +187,3 @@ class QueryGenerator:
                 f"{event_name} alert"
             ]
         }
-

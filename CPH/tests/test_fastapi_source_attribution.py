@@ -7,7 +7,7 @@ from src.api.main import app
 
 client = TestClient(app)
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 def test_source_attribution_endpoint_mock():
     print("[*] Testing POST /api/v1/source-attribution with mock engine...")
@@ -36,7 +36,9 @@ def test_source_attribution_endpoint_mock():
         "iterations": 5,
         "execution_time_sec": 12.3
     }
-    with patch("src.research.astar_attribution.astar_engine.AStarVisualAttributionEngine.trace_origin", return_value=mock_result):
+    engine = MagicMock()
+    engine.trace_origin.return_value = mock_result
+    with patch("src.api.main._new_astar_engine", return_value=engine):
         response = client.post(
             "/api/v1/source-attribution",
             json={"media_path": "data/sample_media/test.webp"}

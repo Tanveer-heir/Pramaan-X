@@ -7,6 +7,9 @@ volumes:
   shared_media:
     name: cph_shared_media
     driver: local
+  cph_data:
+    name: cph_data
+    driver: local
 
 services:
   # ============================================================================
@@ -14,19 +17,21 @@ services:
   # ============================================================================
   ai-detection:
     build:
-      context: ../Pramaan-X
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: Detection/Dockerfile
     container_name: cph-ai-detection
     restart: unless-stopped
     ports:
       - "8001:8001"
     volumes:
       - shared_media:/data/shared_media:ro
-      - ../Pramaan-X/checkpoints:/app/checkpoints
-      - ../Pramaan-X/models:/app/models
+      - ../Detection/checkpoints:/app/Detection/checkpoints:ro
+      - ../Detection/models:/app/Detection/models:ro
     environment:
       - KIMI_API_KEY=${KIMI_API_KEY:-}
       - PRAMAAN_DEVICE=cpu
+      - DETECTION_ALLOWED_MEDIA_ROOT=/data/shared_media
+      - DETECTION_PROCESS_TIMEOUT_SEC=${DETECTION_PROCESS_TIMEOUT_SEC:-900}
       - PORT=8001
       - PYTHONUNBUFFERED=1
     networks:
@@ -51,11 +56,13 @@ services:
       - "8002:8002"
     volumes:
       - shared_media:/data/shared_media:ro
-      - ../prnu-device-attribution-api-handoff/models:/app/models
-      - ../prnu-device-attribution-api-handoff/dataset:/app/dataset
+      - ../prnu-device-attribution-api-handoff/models:/app/models:ro
+      - ../prnu-device-attribution-api-handoff/dataset:/app/dataset:ro
     environment:
       - PORT=8002
       - HOST=0.0.0.0
+      - SHARED_MEDIA_ROOT=/data/shared_media
+      - ALLOW_DEMO_MODEL=false
       - PYTHONUNBUFFERED=1
     networks:
       - cph-net
@@ -78,25 +85,29 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - AI_SERVICE_URL=http://ai-detection:8001
+      - DETECTION_SERVICE_URL=http://ai-detection:8001
       - PRNU_SERVICE_URL=http://prnu-forensics:8002
       - SHARED_MEDIA_DIR=/data/shared_media
+      - INVESTIGATION_OUTPUT_DIR=/app/data/investigations
+      - DETECTION_TIMEOUT_SEC=${DETECTION_TIMEOUT_SEC:-900}
+      - PRNU_TIMEOUT_SEC=${PRNU_TIMEOUT_SEC:-60}
+      - SOURCE_ATTRIBUTION_TIMEOUT_SEC=${SOURCE_ATTRIBUTION_TIMEOUT_SEC:-180}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-524288000}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - APIFY_API_TOKEN=${APIFY_API_TOKEN:-}
       - PYTHONUNBUFFERED=1
       - PYTHONIOENCODING=utf-8
-    env_file:
-      - .env
     volumes:
       - shared_media:/data/shared_media
-      - .:/app
-      - ./data/cache:/app/data/cache
-      - ./data/graphs:/app/data/graphs
+      - cph_data:/app/data
     networks:
       - cph-net
     depends_on:
-      - ai-detection
-      - prnu-forensics
+      ai-detection:
+        condition: service_healthy
+      prnu-forensics:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s

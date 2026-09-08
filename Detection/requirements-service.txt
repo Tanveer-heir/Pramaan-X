@@ -1,0 +1,5 @@
+-r requirements-inference.txt
+fastapi>=0.110,<1
+uvicorn[standard]>=0.28,<1
+onnxruntime==1.23.2
+python-dotenv>=1,<2

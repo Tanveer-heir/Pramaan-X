@@ -5,7 +5,6 @@ Extracts representative keyframes from video inputs and links them to timestamps
 
 from typing import List, Dict, Any, Optional
 import os
-from PIL import Image
 from src.common.logger import logger
 
 try:
@@ -83,21 +82,5 @@ class VideoKeyframeExtractor:
             except Exception as e:
                 logger.warn("keyframe.opencv_error", error=str(e))
 
-        # Fallback simulation if video file or OpenCV is mock
-        fallback_frame = os.path.join(self.output_dir, f"{base_name}_frame_000.jpg")
-        # Create a simple placeholder image if none exists
-        if not os.path.exists(fallback_frame):
-            try:
-                img = Image.new("RGB", (320, 240), color=(73, 109, 137))
-                img.save(fallback_frame)
-            except Exception:
-                pass
-
-        return [
-            {
-                "frame_idx": 0,
-                "timestamp_sec": 0.0,
-                "timestamp_formatted": "00:00",
-                "frame_path": fallback_frame
-            }
-        ]
+        logger.warning("keyframe.extraction_unavailable", video=video_path)
+        return []

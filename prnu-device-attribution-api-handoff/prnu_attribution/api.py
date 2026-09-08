@@ -13,6 +13,8 @@ import uuid
 import os
 import urllib.request
 
+from PIL import Image
+
 from .metadata import read_metadata
 from .model import MODEL_JSON, predict, train
 from .prnu import DEFAULT_SIZE, correlation, fingerprint, residual_from_image
@@ -73,9 +75,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
             return
 
-        if clean_path in ("/api/analyze", "/analyze", "/api/analyse", "/analyse"):
+        if clean_path in (
+            "/api/v1/analyze",
+            "/api/v1/analyse",
+            "/api/analyze",
+            "/analyze",
+            "/api/analyse",
+            "/analyse",
+        ):
             try:
                 image_paths = self._save_uploads()
+                _verify_image(image_paths[0])
                 try:
                     result = predict(
                         image_paths[0],
@@ -112,7 +122,17 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 self._json({"ok": True, "result": result})
             except Exception as exc:
-                self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
+                print(f"PRNU analysis failed: {type(exc).__name__}: {exc}")
+                self._json(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "PRNU_ANALYSIS_FAILED",
+                            "message": "Device attribution could not produce a valid result.",
+                        },
+                    },
+                    status=500,
+                )
             return
 
         if clean_path in ("/api/prnu-match", "/prnu-match"):
@@ -159,7 +179,12 @@ class Handler(BaseHTTPRequestHandler):
                     f.write(resp.read())
                 return [out_path]
             else:
-                local_p = Path(target_str)
+                local_p = Path(target_str).resolve()
+                shared_root_value = os.getenv("SHARED_MEDIA_ROOT")
+                if shared_root_value:
+                    shared_root = Path(shared_root_value).resolve()
+                    if shared_root != local_p and shared_root not in local_p.parents:
+                        raise PermissionError("Local path is outside the configured shared media root")
                 if not local_p.exists():
                     raise FileNotFoundError(f"Local image file not found: {local_p}")
                 return [local_p]
@@ -242,7 +267,7 @@ def main() -> None:
     parser.add_argument(
         "--allow-demo-model",
         action="store_true",
-        default=True,
+        default=os.getenv("ALLOW_DEMO_MODEL", "false").lower() in {"1", "true", "yes"},
         help="Allow the synthetic smoke-test model to score uploaded files.",
     )
     args = parser.parse_args()
@@ -268,12 +293,35 @@ def _status(dataset: Path, model_dir: Path) -> dict[str, object]:
             model = json.loads(model_path.read_text(encoding="utf-8"))
         except Exception:
             model = {"error": "model.json exists but could not be parsed"}
+    summary = summarize_records(records)
+    model_devices = ((model or {}).get("summary") or {}).get("devices", {}) if isinstance(model, dict) else {}
+    demo_model = any("synthetic" in str(label).lower() for label in model_devices)
+    model_usable = model_path.exists() and not demo_model
     return {
-        "dataset": str(dataset),
-        "dataset_summary": summarize_records(records),
+        "status": "ready" if model_usable else "degraded",
+        "process_alive": True,
+        "service": "prnu-device-attribution",
+        "dataset_summary": summary,
         "model_trained": model_path.exists(),
-        "model": model,
+        "reference_model_usable": model_usable,
+        "synthetic_demo_model": demo_model,
+        "capabilities": {
+            "image_attribution": {
+                "available": True,
+                "metadata_available": True,
+                "prnu_reference_set_available": model_usable,
+            },
+            "video_attribution": {"available": False},
+        },
     }
+
+
+def _verify_image(path: Path) -> None:
+    try:
+        with Image.open(path) as image:
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise ValueError("Uploaded evidence is not a decodable image") from exc
 
 
 def _dataset_layout() -> dict[str, object]:

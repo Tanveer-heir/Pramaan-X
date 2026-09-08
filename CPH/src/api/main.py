@@ -2,44 +2,54 @@
 FastAPI Server & Investigator Dashboard Backend (Features 6–10).
 """
 
-from fastapi import FastAPI, HTTPException, status, UploadFile, File
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Dict, Any, List
 from pathlib import Path
-from datetime import datetime, timezone
 import os
 import asyncio
-import httpx
-import uuid
-import shutil
-import hashlib
-import time
-import urllib.request
 
 from src.common.schemas import CombinedEvidenceReport, OriginTracingEvidence
-from src.pipeline.orchestrator import Section2Orchestrator
-from src.source_attribution.pipeline import SourceAttributionPipeline
-from src.research.astar_attribution.astar_engine import AStarVisualAttributionEngine
 from src.common.logger import logger
 from src.common.config import settings
+from src.gateway.artifacts import ArtifactRegistry
+from src.gateway.config import GatewayConfig
+from src.gateway.media import MediaValidationError, store_path_once, store_stream_once
+from src.gateway.models import CapabilitiesResponse, InvestigationResponse
+from src.gateway.orchestrator import UnifiedInvestigationOrchestrator, new_investigation_id
 
 app = FastAPI(
-    title="Chandigarh Police Hackathon — Section 2 Forensic Gateway",
+    title="Chandigarh Police Hackathon Section 2 Forensic Gateway",
     description="Orchestrator & Gateway for AI Content Detection, PRNU Forensics, and A* Visual Attribution",
-    version="2.0.0"
+    version="3.0.0"
 )
 
-AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://ai-detection:8001")
-PRNU_SERVICE_URL = os.getenv("PRNU_SERVICE_URL", "http://prnu-forensics:8002")
-SHARED_MEDIA_DIR = Path(os.getenv("SHARED_MEDIA_DIR", "data/shared_media"))
-SHARED_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+gateway_config = GatewayConfig.from_env()
+gateway_config.shared_media_dir.mkdir(parents=True, exist_ok=True)
+artifact_registry = ArtifactRegistry(gateway_config.investigation_output_dir)
+gateway_orchestrator = UnifiedInvestigationOrchestrator(
+    config=gateway_config,
+    artifact_registry=artifact_registry,
+)
 
-orchestrator = Section2Orchestrator()
-source_attribution_pipeline = SourceAttributionPipeline()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(gateway_config.cors_allowed_origins),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 # In-memory case cache for demonstration
 cases_db: Dict[str, Any] = {}
+
+
+def _new_astar_engine(output_graph_path: str):
+    from src.research.astar_attribution.astar_engine import AStarVisualAttributionEngine
+
+    return AStarVisualAttributionEngine(output_graph_path=output_graph_path)
 
 class AnalysisRequest(BaseModel):
     media_path: str = Field(..., description="Local path or URL to submitted media")
@@ -52,168 +62,119 @@ class AttributionRequest(BaseModel):
 
 
 class InvestigationRequest(BaseModel):
-    media_path: Optional[str] = Field(None, description="Local path or remote URL to submitted media")
-    file_path: Optional[str] = Field(None, description="Shared volume path to submitted media")
+    model_config = ConfigDict(extra="forbid")
+    media_path: Optional[str] = Field(None, description="Developer-only local media path")
+    file_path: Optional[str] = Field(None, description="Developer-only local media path alias")
     case_id: Optional[str] = Field(None, description="Optional investigator case ID")
-
-
-def _prepare_shared_media(target_input: str) -> tuple[Path, str, str]:
-    """
-    Ensures media is available in the shared volume.
-    Returns: (local_path, shared_container_path, sha256_hash)
-    """
-    target_str = str(target_input)
-    if target_str.startswith(("http://", "https://")):
-        ext = Path(target_str.split("?")[0]).suffix or ".jpg"
-        unique_name = f"download_{uuid.uuid4().hex[:12]}{ext}"
-        local_dest = SHARED_MEDIA_DIR / unique_name
-        req = urllib.request.Request(target_str, headers={"User-Agent": "CPH-Gateway/2.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp, open(local_dest, "wb") as f:
-            f.write(resp.read())
-    else:
-        src = Path(target_str)
-        if not src.exists():
-            raise HTTPException(status_code=404, detail=f"Local media file not found: {target_str}")
-        if SHARED_MEDIA_DIR.resolve() not in src.resolve().parents and src.resolve().parent != SHARED_MEDIA_DIR.resolve():
-            unique_name = f"{uuid.uuid4().hex[:8]}_{src.name}"
-            local_dest = SHARED_MEDIA_DIR / unique_name
-            shutil.copy2(src, local_dest)
-        else:
-            local_dest = src
-            unique_name = src.name
-
-    hasher = hashlib.sha256()
-    with open(local_dest, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            hasher.update(chunk)
-    sha256_hex = hasher.hexdigest()
-
-    shared_container_path = f"/data/shared_media/{unique_name}"
-    return local_dest, shared_container_path, sha256_hex
-
-
-async def execute_gateway_fanout(target_input: str, case_id: Optional[str] = None) -> Dict[str, Any]:
-    local_path, shared_container_path, sha256_hex = _prepare_shared_media(target_input)
-    effective_case_id = case_id or f"CASE-{int(time.time())}-{sha256_hex[:8]}"
-
-    # In Docker container, shared media is mounted at /data/shared_media
-    path_for_nodes = shared_container_path if os.path.exists("/data/shared_media") else str(local_path.resolve())
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        # 1. Node 1: AI Content Detection (Pramaan-X)
-        ai_task = client.post(
-            f"{AI_SERVICE_URL}/detect",
-            json={"file_path": path_for_nodes, "media_path": path_for_nodes}
-        )
-
-        # 2. Node 2: PRNU / Device Attribution
-        prnu_task = client.post(
-            f"{PRNU_SERVICE_URL}/analyse",
-            json={"file_path": path_for_nodes, "media_path": path_for_nodes}
-        )
-
-        # 3. Node 3: A* Visual Source Attribution
-        engine = AStarVisualAttributionEngine(
-            output_graph_path="data/graphs/astar_lineage_tree.html"
-        )
-        source_task = engine.trace_origin_async(str(local_path.resolve()))
-
-        # Trigger all 3 concurrently with exception resilience
-        ai_res, prnu_res, source_res = await asyncio.gather(
-            ai_task, prnu_task, source_task, return_exceptions=True
-        )
-
-    # Process AI Detection response
-    if isinstance(ai_res, Exception):
-        logger.warning("gateway.ai_detection_offline", error=str(ai_res))
-        ai_payload = {"status": "offline", "error": str(ai_res), "service": AI_SERVICE_URL}
-    elif ai_res.status_code != 200:
-        ai_payload = {"status": "error", "code": ai_res.status_code, "detail": ai_res.text}
-    else:
-        try:
-            ai_payload = ai_res.json()
-        except Exception:
-            ai_payload = {"status": "error", "raw": ai_res.text}
-
-    # Process PRNU Forensics response
-    if isinstance(prnu_res, Exception):
-        logger.warning("gateway.prnu_offline", error=str(prnu_res))
-        prnu_payload = {"status": "offline", "error": str(prnu_res), "service": PRNU_SERVICE_URL}
-    elif prnu_res.status_code != 200:
-        prnu_payload = {"status": "error", "code": prnu_res.status_code, "detail": prnu_res.text}
-    else:
-        try:
-            prnu_payload = prnu_res.json()
-        except Exception:
-            prnu_payload = {"status": "error", "raw": prnu_res.text}
-
-    # Process Source Attribution response
-    if isinstance(source_res, Exception):
-        logger.error("gateway.source_attribution_failed", error=str(source_res))
-        source_payload = {"status": "error", "error": str(source_res)}
-    else:
-        source_payload = source_res
-
-    # Build consolidated unified report
-    report = {
-        "case_id": effective_case_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "input_media": {
-            "filename": local_path.name,
-            "sha256": sha256_hex,
-            "local_path": str(local_path),
-            "shared_path": shared_container_path,
-        },
-        "ai_content_detection": ai_payload,
-        "prnu_sensor_forensics": prnu_payload,
-        "source_attribution": {
-            "target": source_payload.get("target_media") or source_payload.get("target") if isinstance(source_payload, dict) else None,
-            "patient_zero": source_payload.get("patient_zero") if isinstance(source_payload, dict) else None,
-            "candidate_sources": source_payload.get("candidate_sources", []) if isinstance(source_payload, dict) else [],
-            "graph_html_path": source_payload.get("graph_html_path", "data/graphs/astar_lineage_tree.html") if isinstance(source_payload, dict) else None,
-            "iterations": source_payload.get("iterations", 0) if isinstance(source_payload, dict) else 0,
-            "execution_time_sec": source_payload.get("execution_time_sec", 0.0) if isinstance(source_payload, dict) else 0.0,
-        },
-        "status": "completed",
-    }
-    cases_db[effective_case_id] = report
-    return report
 
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Liveness probe."""
-    return {"status": "ok", "service": "cph-section2-gateway", "environment": settings.ENVIRONMENT}
+    """Cheap liveness probe that does not load forensic models."""
+    return {
+        "status": "ok",
+        "process_alive": True,
+        "service": "cph-unified-gateway",
+        "environment": settings.ENVIRONMENT,
+    }
+
+
+@app.get("/api/v1/capabilities", response_model=CapabilitiesResponse, tags=["System"])
+async def capabilities():
+    """Report live child-service capabilities for frontend routing."""
+    return await gateway_orchestrator.capabilities()
 
 
 # ==============================================================================
 # Unified Gateway Fan-Out Endpoints (§2.4 Multi-Service Orchestrator)
 # ==============================================================================
 
-@app.post("/api/v1/investigate", tags=["Gateway Orchestrator"])
-@app.post("/investigate", tags=["Gateway Orchestrator"])
+@app.post("/api/v1/investigate", response_model=InvestigationResponse, tags=["Gateway Orchestrator"])
+@app.post("/investigate", response_model=InvestigationResponse, tags=["Gateway Orchestrator"])
 async def run_investigation_json(request: InvestigationRequest):
-    """
-    Gateway Fan-Out (Concurrent Execution across 3 nodes).
-    Triggers Node 1 (AI Detection), Node 2 (PRNU Forensics), and Node 3 (A* Attribution)
-    in parallel using asyncio.gather.
-    """
+    """Disabled-by-default developer endpoint for trusted local paths."""
+    if os.getenv("ALLOW_LOCAL_PATH_ENDPOINTS", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "LOCAL_PATH_ENDPOINT_DISABLED", "message": "Use the upload endpoint."},
+        )
     target = request.media_path or request.file_path
     if not target:
-        raise HTTPException(status_code=400, detail="Must provide 'media_path' or 'file_path'")
-    return await execute_gateway_fanout(target, request.case_id)
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "MEDIA_PATH_REQUIRED", "message": "Provide media_path or file_path."},
+        )
+    if target.startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "REMOTE_PATH_REJECTED", "message": "Remote URLs are not accepted here."},
+        )
+    investigation_id = new_investigation_id()
+    try:
+        stored = await asyncio.to_thread(
+            store_path_once,
+            Path(target),
+            investigation_id,
+            gateway_config.shared_media_dir,
+            gateway_config.max_upload_bytes,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail={"code": "MEDIA_NOT_FOUND", "message": "Media file not found."})
+    except MediaValidationError as exc:
+        raise HTTPException(status_code=415, detail={"code": "UNSUPPORTED_MEDIA", "message": str(exc)})
+    report = await gateway_orchestrator.investigate(stored, request.case_id)
+    cases_db[report.case_id] = report
+    cases_db[report.investigation_id] = report
+    return report
 
 
-@app.post("/api/v1/investigate/upload", tags=["Gateway Orchestrator"])
-@app.post("/investigate/upload", tags=["Gateway Orchestrator"])
-async def run_investigation_upload(file: UploadFile = File(...), case_id: Optional[str] = None):
-    """Uploads media file once to shared volume and triggers full 3-node investigation concurrently."""
-    ext = Path(file.filename or "media.jpg").suffix or ".jpg"
-    unique_name = f"upload_{uuid.uuid4().hex[:12]}{ext}"
-    local_dest = SHARED_MEDIA_DIR / unique_name
-    with open(local_dest, "wb") as f:
-        f.write(await file.read())
-    return await execute_gateway_fanout(str(local_dest), case_id)
+@app.post("/api/v1/investigate/upload", response_model=InvestigationResponse, tags=["Gateway Orchestrator"])
+@app.post("/investigate/upload", response_model=InvestigationResponse, tags=["Gateway Orchestrator"])
+async def run_investigation_upload(
+    file: UploadFile = File(...),
+    case_id: Optional[str] = Form(default=None),
+):
+    """Save one browser upload once, then fan out over the immutable evidence."""
+    investigation_id = new_investigation_id()
+    try:
+        stored = await asyncio.to_thread(
+            store_stream_once,
+            file.file,
+            file.filename,
+            investigation_id,
+            gateway_config.shared_media_dir,
+            gateway_config.max_upload_bytes,
+        )
+    except MediaValidationError as exc:
+        status_code = 413 if "maximum size" in str(exc) else 415
+        code = "UPLOAD_TOO_LARGE" if status_code == 413 else "UNSUPPORTED_MEDIA"
+        raise HTTPException(status_code=status_code, detail={"code": code, "message": str(exc)})
+    finally:
+        await file.close()
+    report = await gateway_orchestrator.investigate(stored, case_id)
+    cases_db[report.case_id] = report
+    cases_db[report.investigation_id] = report
+    return report
+
+
+@app.get(
+    "/api/v1/investigations/{investigation_id}",
+    response_model=InvestigationResponse,
+    tags=["Gateway Orchestrator"],
+)
+async def get_investigation(investigation_id: str):
+    report = cases_db.get(investigation_id)
+    if not isinstance(report, InvestigationResponse):
+        raise HTTPException(status_code=404, detail={"code": "INVESTIGATION_NOT_FOUND", "message": "Investigation not found."})
+    return report
+
+
+@app.get("/api/v1/investigations/{investigation_id}/artifacts/{artifact_key}", tags=["Artifacts"])
+async def get_investigation_artifact(investigation_id: str, artifact_key: str):
+    entry = artifact_registry.resolve(investigation_id, artifact_key)
+    if entry is None:
+        raise HTTPException(status_code=404, detail={"code": "ARTIFACT_NOT_FOUND", "message": "Artifact not found."})
+    return FileResponse(entry.path, media_type=entry.reference.media_type)
 
 
 # ==============================================================================
@@ -224,7 +185,9 @@ async def run_investigation_upload(file: UploadFile = File(...), case_id: Option
 async def run_analysis(request: AnalysisRequest):
     """Executes full Section 2 pipeline: Provenance Check + Origin Tracing + Chain of Custody."""
     try:
-        report = await orchestrator.analyze(
+        from src.pipeline.orchestrator import Section2Orchestrator
+
+        report = await Section2Orchestrator().analyze(
             media_path=request.media_path,
             case_id=request.case_id,
             section1_evidence=request.section1_evidence
@@ -255,7 +218,9 @@ async def get_case_report(case_id: str):
 async def run_source_attribution(request: AttributionRequest):
     """Directly executes Source Attribution & Origin Tracing (§2.4)."""
     try:
-        evidence = await source_attribution_pipeline.execute(media_path=request.media_path)
+        from src.source_attribution.pipeline import SourceAttributionPipeline
+
+        evidence = await SourceAttributionPipeline().execute(media_path=request.media_path)
         return evidence
     except Exception as e:
         logger.error("api.attribution_failed", error=str(e))
@@ -270,12 +235,10 @@ async def run_source_attribution(request: AttributionRequest):
 async def run_astar_attribution(request: AttributionRequest):
     """
     Executes A* Heuristic Traversal Engine (§2.4b).
-    Isolates Patient Zero and returns ranked source candidates with match probabilities.
+    Isolates a Patient Zero candidate and returns native heuristic source rankings.
     """
     try:
-        engine = AStarVisualAttributionEngine(
-            output_graph_path="data/graphs/astar_lineage_tree.html"
-        )
+        engine = _new_astar_engine("data/graphs/astar_lineage_tree.html")
         results = await asyncio.to_thread(engine.trace_origin, request.media_path)
         return results
     except Exception as e:

@@ -163,7 +163,7 @@ class EventContextExtractor:
 
         logger.info(
             "context_extractor.complete",
-            event=event_name,
+            event_name=event_name,
             date=event_date,
             confidence=profile["confidence"]
         )

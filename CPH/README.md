@@ -141,7 +141,7 @@ docker compose build
 ### 3. Start the Microservice (Docker)
 ```bash
 # Start FastAPI service on http://localhost:8000
-docker compose up source-attribution
+docker compose --env-file ../.env up cph-gateway
 
 # Or use helper runners:
 ./docker-run.sh api       # Linux / macOS
@@ -157,7 +157,7 @@ docker compose up source-attribution
 .\docker-run.ps1 -Command test_astar -Target "https://images.firstpost.com/wp-content/uploads/2021/01/Farmers-tractor-rally-AP-640.jpg"
 
 # Or standard Docker Compose
-docker compose run --rm source-attribution python test_astar_attribution.py "<url_or_path>"
+docker compose --env-file ../.env run --rm cph-gateway python test_astar_attribution.py "<url_or_path>"
 ```
 
 ### 5. Modify Code Live (No Rebuilds)
@@ -231,6 +231,8 @@ pytest -v
 
 ## 🌐 Multi-Service Forensic Architecture & Unified Gateway
 
+> The versioned frontend contract is now maintained in [`../docs/API_CONTRACT.md`](../docs/API_CONTRACT.md). The examples below describe the earlier prototype and may contain legacy field names. Frontend development must use `POST /api/v1/investigate/upload` and the `pramaan_x_investigation_v1` schema from the contract document.
+
 This system acts as both **Node 3: Source Attribution & Origin Tracing** and the **Unified Forensic Gateway & Dispatcher** (`cph-gateway`) for the entire 3-node forensic investigation platform.
 
 ### Unified 3-Node Architecture (`cph-net` + `shared_media` volume)
@@ -255,7 +257,7 @@ This system acts as both **Node 3: Source Attribution & Origin Tracing** and the
         │ Port: 8001            │ │ Port: 8002            │ │ Port: 8000            │
         │ POST /detect          │ │ POST /analyse         │ │ POST /source-attribution│
         │ Returns: Manipulation │ │ Returns: Sensor Noise │ │ Returns: Patient Zero │
-        │ probabilities & ELA   │ │ device attribution    │ │ & Crop Homography     │
+        │ native evidence JSON  │ │ device attribution    │ │ & Crop Homography     │
         └───────────┬───────────┘ └───────────┬───────────┘ └───────────┬───────────┘
                     │                         │                         │
                     └─────────────────────────┼─────────────────────────┘
