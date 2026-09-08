@@ -1,0 +1,8 @@
+# Isolated dependencies for the official XLSR-SLS ONNX compatibility path.
+# Install into the existing project venv only after the core PyTorch environment works.
+huggingface-hub>=0.34,<2
+numpy>=1.26,<3
+onnx>=1.17,<2
+# 1.27+ PyPI wheels target CUDA 13. Keep this pinned to the CUDA 12 line used
+# by the project's PyTorch environment and the RTX 4080 laptop.
+onnxruntime-gpu==1.23.2

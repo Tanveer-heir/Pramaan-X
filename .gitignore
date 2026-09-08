@@ -1,0 +1,70 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+kaggle.json
+
+# Raw / generated data
+data/raw/
+data/interim/
+
+# ML artifacts
+features/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Publish only the accepted Pramaan-X checkpoints
+!checkpoints/
+checkpoints/*
+
+!checkpoints/visual_temporal/
+checkpoints/visual_temporal/*
+!checkpoints/visual_temporal/visual_temporal_20260904T145626Z.pt
+
+!checkpoints/audio_classifier/
+checkpoints/audio_classifier/*
+!checkpoints/audio_classifier/audio_classifier_20260904T181732Z.pt
+
+!checkpoints/av_sync_dense/
+checkpoints/av_sync_dense/*
+!checkpoints/av_sync_dense/av_sync_dense_20260905T055537Z.pt
+
+!checkpoints/fusion/
+checkpoints/fusion/*
+!checkpoints/fusion/pramaan_x_hackathon_final.pth
+
+# Outputs
+outputs/
+logs/
+
+# Local models
+models/mediapipe/*.task
+models/xlsr_sls/
+
+# Tools (FFmpeg etc.)
+tools/
+
+# Virtualenv
+venv/
+
+# Scratch & Archives
+scratch/
+*.zip
+*.tar
+*.gz
+*.7z
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,11 @@
+# Platform-neutral dependencies for raw-video and feature-cache inference.
+# Install PyTorch/TorchVision and ONNX Runtime separately for CPU or CUDA as
+# documented in README.md. Do not install opencv-python alongside the contrib
+# distribution because both provide the cv2 module.
+huggingface-hub>=0.34,<2
+mediapipe>=1.0,<2
+numpy>=1.26,<3
+onnx>=1.17,<2
+opencv-contrib-python>=4.10,<6
+pandas>=2.3,<4
+pillow>=11,<13
