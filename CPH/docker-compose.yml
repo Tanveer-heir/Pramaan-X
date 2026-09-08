@@ -1,0 +1,105 @@
+networks:
+  cph-net:
+    name: cph-net
+    driver: bridge
+
+volumes:
+  shared_media:
+    name: cph_shared_media
+    driver: local
+
+services:
+  # ============================================================================
+  # Node 1: AI Content Detection (Pramaan-X)
+  # ============================================================================
+  ai-detection:
+    build:
+      context: ../Pramaan-X
+      dockerfile: Dockerfile
+    container_name: cph-ai-detection
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - shared_media:/data/shared_media:ro
+      - ../Pramaan-X/checkpoints:/app/checkpoints
+      - ../Pramaan-X/models:/app/models
+    environment:
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - PRAMAAN_DEVICE=cpu
+      - PORT=8001
+      - PYTHONUNBUFFERED=1
+    networks:
+      - cph-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # Node 2: PRNU / Device Attribution & Metadata Forensics
+  # ============================================================================
+  prnu-forensics:
+    build:
+      context: ../prnu-device-attribution-api-handoff
+      dockerfile: Dockerfile
+    container_name: cph-prnu-forensics
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - shared_media:/data/shared_media:ro
+      - ../prnu-device-attribution-api-handoff/models:/app/models
+      - ../prnu-device-attribution-api-handoff/dataset:/app/dataset
+    environment:
+      - PORT=8002
+      - HOST=0.0.0.0
+      - PYTHONUNBUFFERED=1
+    networks:
+      - cph-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8002/health\")' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ============================================================================
+  # Node 3 & Orchestrator Gateway: Section 2 Gateway & Source Attribution
+  # ============================================================================
+  cph-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cph-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - AI_SERVICE_URL=http://ai-detection:8001
+      - PRNU_SERVICE_URL=http://prnu-forensics:8002
+      - SHARED_MEDIA_DIR=/data/shared_media
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - APIFY_API_TOKEN=${APIFY_API_TOKEN:-}
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+    env_file:
+      - .env
+    volumes:
+      - shared_media:/data/shared_media
+      - .:/app
+      - ./data/cache:/app/data/cache
+      - ./data/graphs:/app/data/graphs
+    networks:
+      - cph-net
+    depends_on:
+      - ai-detection
+      - prnu-forensics
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

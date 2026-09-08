@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Device Attribution Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Forensic MVP</p>
+        <h1>Device Attribution Dashboard</h1>
+      </div>
+      <div class="actions">
+        <button id="refreshBtn" type="button">Refresh</button>
+        <button id="trainBtn" type="button">Train</button>
+      </div>
+    </header>
+
+    <nav class="view-tabs" aria-label="Forensic tools">
+      <button class="view-tab active" type="button" data-view="device">Device Attribution</button>
+      <button class="view-tab" type="button" data-view="prnu">PRNU Fingerprint Lab</button>
+    </nav>
+
+    <main id="deviceView" class="layout">
+      <section class="panel status-panel">
+        <div class="panel-head">
+          <h2>Dataset</h2>
+          <span id="modelBadge" class="badge">Checking</span>
+        </div>
+        <div id="datasetSummary" class="summary-grid"></div>
+        <div id="warnings" class="warnings"></div>
+      </section>
+
+      <section class="panel analyze-panel">
+        <div class="panel-head">
+          <h2>Analyze</h2>
+          <span class="badge muted">Image</span>
+        </div>
+        <form id="analyzeForm" class="upload-box">
+          <input id="imageInput" name="image" type="file" accept="image/*" />
+          <button id="analyzeButton" type="submit">Analyze Device</button>
+        </form>
+        <div id="previewWrap" class="preview-wrap hidden">
+          <img id="preview" alt="Selected image preview" />
+        </div>
+      </section>
+
+      <section class="panel device-channel">
+        <div class="panel-head">
+          <h2>Device Attribution Channel</h2>
+          <span id="resultBadge" class="badge muted">Idle</span>
+        </div>
+        <div class="channel-body device">
+          <p class="label">Known Device Match</p>
+          <h3 id="devicePrediction">-</h3>
+          <div class="meter"><span id="deviceMeter"></span></div>
+          <p id="deviceMethod" class="subtle">-</p>
+          <dl class="mini-facts">
+            <dt>Known Label</dt>
+            <dd id="knownDeviceLabel">-</dd>
+            <dt>Camera Model</dt>
+            <dd id="cameraModelHint">-</dd>
+            <dt>PRNU Template</dt>
+            <dd id="deviceTemplate">-</dd>
+          </dl>
+        </div>
+        <div class="evidence compact">
+          <h3>Evidence</h3>
+          <ul id="deviceEvidenceList"></ul>
+        </div>
+      </section>
+
+      <section class="panel metadata-panel">
+        <div class="panel-head">
+          <h2>Metadata</h2>
+          <span class="badge muted">EXIF/JPEG</span>
+        </div>
+        <dl id="metadataList" class="metadata-list"></dl>
+      </section>
+    </main>
+
+    <main id="prnuView" class="layout prnu-layout" hidden>
+      <section class="panel prnu-reference-panel">
+        <div class="panel-head">
+          <h2>Reference Fingerprint</h2>
+          <span id="referenceBadge" class="badge muted">No files</span>
+        </div>
+        <p class="subtle">Choose a folder containing known images captured by the same device.</p>
+        <form id="prnuForm" class="upload-box">
+          <input id="referenceInput" name="reference" type="file" accept="image/*" multiple webkitdirectory directory />
+          <ul id="referenceFileList" class="file-list"></ul>
+        </form>
+      </section>
+
+      <section class="panel prnu-query-panel">
+        <div class="panel-head">
+          <h2>Unseen Query Image</h2>
+          <span id="queryBadge" class="badge muted">No file</span>
+        </div>
+        <p class="subtle">Upload one image to compare against the reference fingerprint.</p>
+        <input id="queryInput" name="query" type="file" accept="image/*" />
+        <div id="queryPreviewWrap" class="preview-wrap hidden">
+          <img id="queryPreview" alt="Unseen query image preview" />
+        </div>
+        <button id="matchPrnuButton" class="primary-action" type="submit" form="prnuForm">Build Fingerprint &amp; Match</button>
+      </section>
+
+      <section class="panel prnu-result-panel">
+        <div class="panel-head">
+          <h2>PRNU / Metadata Result</h2>
+          <span id="prnuResultBadge" class="badge muted">Idle</span>
+        </div>
+        <div class="prnu-decision">
+          <p class="label">Identified Device</p>
+          <h3 id="prnuDecision">-</h3>
+          <div class="meter"><span id="prnuMeter"></span></div>
+          <p id="prnuSummary" class="subtle">Upload references and a query image to begin.</p>
+        </div>
+        <dl class="mini-facts">
+          <dt>Correlation</dt>
+          <dd id="prnuCorrelation">-</dd>
+          <dt>Confidence</dt>
+          <dd id="prnuConfidence">-</dd>
+          <dt>References</dt>
+          <dd id="prnuReferenceCount">-</dd>
+          <dt>Query Camera</dt>
+          <dd id="prnuQueryCamera">-</dd>
+        </dl>
+        <div class="evidence compact">
+          <h3>Evidence</h3>
+          <ul id="prnuEvidenceList"></ul>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

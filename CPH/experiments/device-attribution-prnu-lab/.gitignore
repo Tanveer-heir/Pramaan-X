@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+models/
+runs/
+dataset/*
+!dataset/.gitkeep
+sample_dataset*/
+*.zip
+.env
+.DS_Store

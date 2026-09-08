@@ -1,0 +1,43 @@
+﻿# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+kaggle.json
+
+# CPH Specific Caches & Media
+CPH/data/cache/
+CPH/data/shared_media/
+CPH/data/graphs/
+CPH/.pytest_cache/
+CPH/__pycache__/
+
+# PRNU Specific
+prnu-device-attribution-api-handoff/runs/uploads/
+prnu-device-attribution-api-handoff/__pycache__/
+
+# Detection Specific
+Detection/data/raw/
+Detection/data/interim/
+Detection/features/
+Detection/outputs/
+Detection/logs/
+
+# Archives & Temporary Files
+*.zip
+*.tar
+*.gz
+*.7z
+scratch/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
