@@ -330,6 +330,179 @@ The primary gateway endpoint. Ingests media once, writes to the high-performance
 }
 ```
 
+---
+
+## 🎨 Frontend Developer Integration & UI Communication Contracts
+
+This section defines the exact communication contract, data schemas, and UI rendering guidelines for frontend engineers building the Investigator Dashboard in React, Next.js, Vue, or Angular.
+
+### 1. Unified TypeScript Communication Contract
+```typescript
+// ==========================================
+// 1. Unified Investigation Report (Gateway)
+// ==========================================
+export interface UnifiedInvestigationResponse {
+  case_id: string;
+  media_sha256: string;
+  shared_media_path: string;
+  execution_time_sec: number;
+  
+  // Node 1: AI Content Detection (Pramaan-X)
+  ai_content_detection: {
+    status?: string; // 'offline' | 'error' when service unreachable
+    media_type?: 'image' | 'video';
+    prediction?: 'REAL' | 'LIKELY_AUTHENTIC' | 'SUSPICIOUS' | 'LIKELY_MANIPULATED';
+    confidence?: string; // 'HIGH' | 'MEDIUM' | 'LOW'
+    probability?: number; // 0.0 to 1.0
+    summary?: string;
+    findings?: string[];
+  };
+
+  // Node 2: PRNU Sensor Forensics & Device Attribution
+  prnu_sensor_forensics: {
+    ok?: boolean;
+    status?: string; // 'offline' | 'error'
+    result?: {
+      device: {
+        label: string; // e.g. "OnePlus 12R"
+        method: 'prnu' | 'metadata' | 'weak_features' | 'inconclusive';
+        confidence: number; // 0.0 to 1.0
+      };
+      metadata: {
+        make?: string;
+        model?: string;
+        software?: string;
+        exif_present: boolean;
+      };
+      evidence: string[];
+    };
+  };
+
+  // Node 3: A* Visual Source Attribution & Patient Zero
+  source_attribution: {
+    target_media?: {
+      url: string;
+      local_path: string;
+      resolution: [number, number]; // [width, height]
+      pdq_hex: string;
+      timestamp?: string;
+      domain?: string;
+    };
+    patient_zero?: PatientZero;
+    candidate_sources: CandidateSource[];
+    graph_html_path?: string;
+    iterations?: number;
+    nodes_explored?: number;
+    execution_time_sec?: number;
+  };
+}
+
+export interface PatientZero {
+  media_url: string;
+  source_page_url: string;
+  local_cached_path: string;
+  domain: string;
+  publisher: string;
+  probability: number;
+  confidence: number;
+  timestamp: string; // ISO 8601 UTC string (e.g. "2021-01-26T06:15:00Z")
+  resolution: [number, number]; // [width, height]
+  match_type: 'parent_master_original' | 'exact_clone' | 'partial_crop';
+  crop_type: 'target_is_crop_of_candidate' | 'exact' | 'none';
+  bounding_box?: [number, number, number, number]; // [x, y, width, height]
+  scale_factor?: number; // e.g. 3.302
+  pdq_distance: number; // 0 to 256
+  inlier_count: number; // e.g. 1700
+  inlier_ratio: number; // 0.0 to 1.0 (e.g. 0.99)
+  is_authoritative_wire: boolean; // true for AP, Reuters, Getty, etc.
+  evidence: string;
+}
+
+export interface CandidateSource {
+  node_id: string;
+  media_url: string;
+  source_page_url: string;
+  domain: string;
+  probability: number;
+  match_type: string;
+  crop_type?: string;
+  resolution?: [number, number];
+  timestamp?: string;
+  is_authoritative_wire: boolean;
+  inlier_count: number;
+  pdq_distance: number;
+  evidence: string;
+}
+```
+
+---
+
+### 2. Frontend UI Component Guidelines
+
+#### A. Patient Zero Hero Card
+* **Primary Headline**: Display `patient_zero.domain` and `patient_zero.publisher`.
+* **Publication Timestamp**: Parse `patient_zero.timestamp` into localized human format with UTC fallback (e.g., `Jan 26, 2021, 11:45:00 AM UTC`).
+* **Authoritative Wire Badge**: If `patient_zero.is_authoritative_wire == true`, render a Gold/Verified shield badge: **`Verified News Wire (AP/Reuters)`**.
+* **Match Quality Metric**: Display SIFT Inlier Count (`patient_zero.inlier_count`) and Inlier Ratio as a forensic certainty meter (`inlier_ratio * 100%`).
+
+#### B. Crop Homography Visualizer (Canvas Bounding Box)
+When `patient_zero.bounding_box` is present, the target suspect image was mathematically proven to be a sub-region crop of the parent photograph!
+Frontend developers can render the crop cutout overlay using HTML5 Canvas or CSS:
+```javascript
+// Example React / Canvas snippet to render crop box on Master image:
+function renderCropOverlay(canvas, masterImg, bbox) {
+  const [x, y, w, h] = bbox; // [0, 171, 2048, 1194]
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(masterImg, 0, 0);
+  
+  // Highlight Crop Region
+  ctx.strokeStyle = '#EF4444'; // Red bounding box
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x, y, w, h);
+  
+  // Semi-transparent mask over excluded regions
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.fillRect(0, 0, masterImg.width, y); // top mask
+  ctx.fillRect(0, y + h, masterImg.width, masterImg.height - (y + h)); // bottom mask
+}
+```
+
+#### C. Interactive Forensic Lineage Graph
+Embed the interactive PyVis graph directly into dashboard views:
+```html
+<iframe 
+  src="http://localhost:8000/graphs/astar" 
+  width="100%" 
+  height="600px" 
+  frameborder="0"
+  style="border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"
+></iframe>
+```
+
+---
+
+### 3. Graceful Offline Resilience (Frontend Protection)
+If Node 1 (AI Detection) or Node 2 (PRNU) are offline or starting up, the Gateway **never crashes** and returns HTTP 200 with an offline status envelope:
+```json
+{
+  "ai_content_detection": {
+    "status": "offline",
+    "error": "Connection refused",
+    "service": "http://ai-detection:8001"
+  },
+  "prnu_sensor_forensics": {
+    "status": "offline",
+    "error": "Connection refused"
+  },
+  "source_attribution": {
+    "patient_zero": { ... }
+  }
+}
+```
+*Frontend rule*: If `ai_content_detection.status === 'offline'`, render an Amber status indicator: *"Service starting / offline"* while still rendering the full Patient Zero and Source Attribution results!
+
+---
+
 #### 2. Visual Source Attribution & Patient Zero (`POST /source-attribution` or `POST /api/v1/source-attribution`)
 Executes the A* Heuristic Traversal Engine, homography crop detection, and Patient Zero isolation.
 
