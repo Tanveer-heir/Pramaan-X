@@ -1,0 +1,26 @@
+[
+  {
+    "instance_id": "demo_001",
+    "platform": "telegram_channel_in",
+    "timestamp": "2026-08-18T08:00:00Z",
+    "pdq_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "caption": "Earliest known forward in regional alert group",
+    "uploader": "anon_tg_forwarder"
+  },
+  {
+    "instance_id": "demo_002",
+    "platform": "whatsapp_forward",
+    "timestamp": "2026-08-18T10:30:00Z",
+    "pdq_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91",
+    "caption": "Recompressed video with forward tag",
+    "uploader": "group_member_99"
+  },
+  {
+    "instance_id": "demo_003",
+    "platform": "x_twitter",
+    "timestamp": "2026-08-18T14:45:00Z",
+    "pdq_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f92",
+    "caption": "Viral post circulating with hashtags",
+    "uploader": "@regional_watch_news"
+  }
+]

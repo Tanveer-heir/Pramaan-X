@@ -1,0 +1,32 @@
+services:
+  analyse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cph-analyse
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - .:/app
+      - ./dataset:/app/dataset
+      - ./models:/app/models
+      - ./runs:/app/runs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+      - PORT=8002
+      - HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8002/health\")' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cph-internal-net
+
+networks:
+  cph-internal-net:
+    name: cph-internal-net
+    driver: bridge
