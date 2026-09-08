@@ -30,6 +30,7 @@ def valid_model_result():
                 "severity": "MEDIUM",
                 "region": "face",
                 "finding": "Facial illumination is difficult to reconcile with the visible background shadow.",
+                "region_bbox": {"x": 0.10, "y": 0.20, "width": 0.40, "height": 0.30},
             }
         ],
         "supporting_signals": {key: "INCONCLUSIVE" for key in MODULE.SIGNAL_KEYS},
@@ -64,7 +65,14 @@ class ImageAnalysisTests(unittest.TestCase):
         result = MODULE.validate_model_result(valid_model_result())
         self.assertEqual(result["assessment"]["label"], "SUSPICIOUS")
         self.assertEqual(len(result["visual_findings"]), 1)
+        self.assertEqual(result["visual_findings"][0]["region_bbox"]["width"], 0.4)
         self.assertEqual(set(result["supporting_signals"]), set(MODULE.SIGNAL_KEYS))
+
+    def test_invalid_region_bbox_is_rejected(self):
+        value = valid_model_result()
+        value["visual_findings"][0]["region_bbox"] = {"x": 0.8, "y": 0.2, "width": 0.4, "height": 0.2}
+        with self.assertRaisesRegex(ValueError, "invalid region_bbox"):
+            MODULE.validate_model_result(value)
 
     def test_invalid_label_is_rejected(self):
         value = valid_model_result()

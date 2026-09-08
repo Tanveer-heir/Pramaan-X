@@ -147,6 +147,79 @@ The timeline does not claim an exact fake interval or ground-truth manipulation 
 }
 ```
 
+## Investigator HTML report
+
+The prediction JSON is machine-readable evidence. The separate report command
+turns that artifact into a self-contained HTML report with embedded PNGs. It does
+not rerun inference, retrain a model, apply a new threshold, or change the
+prediction contract.
+
+For a video prediction:
+
+```bash
+python scripts/report/generate_investigator_report.py \
+  --prediction predictions/result.json \
+  --output predictions/result_report.html
+```
+
+The command writes the HTML report and an adjacent assets directory containing:
+
+- `counterfactual_sensitivity.png`, showing the selected-class score for full
+  evidence and each valid leave-one-available-modality-out intervention;
+- `dense_av_timeline.png`, showing timestamped dense-AV evidence using the
+  actual cached `start_sec`, `end_sec`, and `center_sec` values; and
+- no empty chart when the corresponding evidence is unavailable.
+
+The chart labels preserve score semantics. Softmax values are labelled as
+uncalibrated class scores, not probabilities. Dense-AV values are labelled as
+AV inconsistency logits or raw dense-AV logits, depending on the field present
+in the prediction. No fake/not-fake segment threshold is drawn.
+
+For an image prediction:
+
+```bash
+python scripts/report/generate_investigator_report.py \
+  --prediction predictions/image_result.json \
+  --image "/absolute/path/to/image.jpg" \
+  --output predictions/image_report.html
+```
+
+Image findings remain text-first. An overlay is generated only when a finding
+contains an explicitly validated normalized `region_bbox` with `x`, `y`,
+`width`, and `height` in the full image frame. A text region such as `face` is
+never converted into a guessed rectangle. Any overlay is described as an
+approximate model-indicated region, not localization or proof.
+
+### Explainability and scaling boundary
+
+```mermaid
+flowchart TD
+    A["Media ingress"] --> B["Disposable extraction workspace"]
+    B --> C["Frozen evidence extractors"]
+    C --> D["Masked fusion and JSON artifact"]
+    D --> E["HTML report and future attribution layer"]
+    D --> F["Optional persisted evidence store"]
+```
+
+The current implementation is a local, single-case prototype. A later service
+can place a queue and worker pool before disposable extraction, store prediction
+artifacts by case identifier, and serve the report as a read-only view. Those
+deployment components are intentionally not part of the detector or this
+reporting layer. The heavy extractors should remain isolated from the web
+request process, while the report renderer can remain a lightweight CPU-only
+worker.
+
+### Model updatability
+
+The reporting layer reads the additive prediction contract rather than model
+internals. Updating a branch therefore requires a new accepted branch
+checkpoint, its feature schema and score semantics, and a provenance record.
+Updating fusion requires a compatible input order and class contract. The
+counterfactual and report code can remain unchanged when those contracts are
+preserved. If a future model changes a field's meaning, the prediction schema
+and report labels must be updated together. Existing accepted checkpoints are
+not silently replaced.
+
 ## Still-image analysis
 
 Still images do not use the video's four-class taxonomy. They are analysed by a separate **LLM-assisted visual authenticity assessment** path and receive one of three labels:
@@ -436,6 +509,10 @@ The prediction artifact uses additive schema version `pramaan_x_prediction_v2`. 
 - `checkpoint_provenance`; and
 - `raw_video` extraction provenance when the raw wrapper is used.
 
+The report layer consumes this JSON without adding local filesystem paths to the
+core contract. Its generated HTML embeds the PNG evidence so it can be copied
+as one investigator-facing artifact.
+
 Image results use `pramaan_x_image_analysis_v1` and contain `media_type`, `input`, categorical `assessment`, structured `visual_findings`, `supporting_signals`, `analysis`, and explicit `limitations`.
 
 Use `python -m json.tool predictions/result.json` to inspect a completed result.
@@ -447,7 +524,8 @@ python -m unittest \
   tests/test_pramaan_x_fusion.py \
   tests/test_predict_pramaan_x.py \
   tests/test_predict_pramaan_x_video.py \
-  tests/test_analyse_pramaan_x_image.py
+  tests/test_analyse_pramaan_x_image.py \
+  tests/test_explainability_reporting.py
 ```
 
 The image tests use a mocked model boundary. They validate supported input handling, deterministic hashing, metadata extraction, strict label/confidence/finding validation, bounded retry behavior, missing credentials, and limitation fields. They do not make paid API calls. Safe checkpoint loading and complete cache/raw inference remain local GPU/runtime validations.

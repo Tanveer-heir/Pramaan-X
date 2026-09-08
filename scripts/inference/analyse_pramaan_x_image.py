@@ -12,6 +12,7 @@ import base64
 from collections.abc import Callable
 import hashlib
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -66,6 +67,11 @@ resolution, or professionally edited. Do not assume it is authentic because no
 obvious artifact is visible. Describe only anomalies you can actually observe.
 If evidence is weak or ambiguous, prefer SUSPICIOUS or LOW confidence.
 
+Only include region_bbox when an approximate region can be grounded in the supplied
+image. Coordinates are normalized to the full image frame, with x and y at the
+top-left and width and height extending right and down. Omit region_bbox when the
+finding is text-only, broad, or not spatially grounded.
+
 Return only a JSON object with this shape:
 {
   "assessment": {
@@ -78,7 +84,8 @@ Return only a JSON object with this shape:
       "category": "facial_anatomy | hands_body | lighting | reflections | textures | background_geometry | text_symbols | compositing_edges | semantic_consistency | general_uncertainty",
       "severity": "LOW | MEDIUM | HIGH | INCONCLUSIVE",
       "region": "image region or whole_image",
-      "finding": "only an observed finding"
+      "finding": "only an observed finding",
+      "region_bbox": {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0}
     }
   ],
   "supporting_signals": {
@@ -255,7 +262,7 @@ def validate_model_result(value: dict[str, Any]) -> dict[str, Any]:
     findings = value.get("visual_findings")
     if not isinstance(findings, list):
         raise ValueError("visual_findings must be a list")
-    clean_findings: list[dict[str, str]] = []
+    clean_findings: list[dict[str, Any]] = []
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict):
             raise ValueError(f"Finding {index} must be an object")
@@ -271,12 +278,18 @@ def validate_model_result(value: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"Invalid finding severity at index {index}: {severity!r}")
         if not all(isinstance(item, str) and item.strip() for item in (region, text)):
             raise ValueError(f"Finding {index} requires non-empty region and finding text")
-        clean_findings.append({
+        clean_finding: dict[str, Any] = {
             "category": category,
             "severity": severity,
             "region": region,
             "finding": text,
-        })
+        }
+        if "region_bbox" in finding:
+            region_bbox = normalize_region_bbox(finding["region_bbox"])
+            if region_bbox is None:
+                raise ValueError(f"Finding {index} has invalid region_bbox")
+            clean_finding["region_bbox"] = region_bbox
+        clean_findings.append(clean_finding)
 
     signals = value.get("supporting_signals")
     if not isinstance(signals, dict) or any(
@@ -293,6 +306,26 @@ def validate_model_result(value: dict[str, Any]) -> dict[str, Any]:
         "visual_findings": clean_findings,
         "supporting_signals": {key: signals[key] for key in SIGNAL_KEYS},
     }
+
+
+def normalize_region_bbox(value: Any) -> dict[str, float] | None:
+    """Validate optional normalized image-frame coordinates."""
+    if isinstance(value, dict):
+        values = [value.get(key) for key in ("x", "y", "width", "height")]
+    elif isinstance(value, (list, tuple)) and len(value) == 4:
+        values = list(value)
+    else:
+        return None
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in values):
+        return None
+    x, y, width, height = (float(item) for item in values)
+    if not all(math.isfinite(item) for item in (x, y, width, height)):
+        return None
+    if min(x, y, width, height) < 0 or width <= 0 or height <= 0:
+        return None
+    if x + width > 1 or y + height > 1:
+        return None
+    return {"x": x, "y": y, "width": width, "height": height}
 
 
 def analyse_image_with_vlm(
