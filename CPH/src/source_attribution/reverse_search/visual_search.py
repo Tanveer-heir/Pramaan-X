@@ -29,15 +29,29 @@ class VisualSearchConnector:
 
     def __init__(self, max_results: int = 50):
         self.max_results = max_results
+        self.last_status: Dict[str, Any] = {
+            "source_connector": "reverse_visual_search",
+            "status": "unavailable" if not HAS_DDGS else "not_run",
+            "result_count": 0,
+            "failure_reason": "DuckDuckGo image search is unavailable" if not HAS_DDGS else None,
+        }
 
     def search(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Searches visual image index and returns candidate hits with image URLs."""
         logger.info("reverse_search.visual.started", query=query, limit=limit)
 
         if os.environ.get("FORENSIC_BENCHMARK_MODE") == "1":
-            return self._fallback_hits(query, limit)
+            hits = self._fallback_hits(query, limit)
+            self.last_status = {
+                "source_connector": "reverse_visual_search",
+                "status": "fixture",
+                "result_count": len(hits),
+                "failure_reason": "benchmark fixture enabled",
+            }
+            return hits
 
         hits = []
+        error_reason = None
 
         if HAS_DDGS:
             try:
@@ -56,26 +70,42 @@ class VisualSearchConnector:
                         "thumbnail_url": img_url,
                         "title": title,
                         "text": f"Visually matching media: {title}. Source: {page_url}",
-                        "created_utc": datetime.now(timezone.utc).isoformat(),
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "published_at": None,
+                        "timestamp_type": "retrieved_at",
+                        "media_verification": "not_downloaded",
+                        "evidence_status": "unverified",
+                        "source_connector": "reverse_visual_search",
+                        "is_synthetic": False,
                         "width": item.get("width"),
                         "height": item.get("height"),
                         "has_media": True
                     })
 
                 if hits:
+                    self.last_status = {
+                        "source_connector": "reverse_visual_search",
+                        "status": "ok",
+                        "result_count": len(hits),
+                    }
                     logger.info("reverse_search.visual.success", count=len(hits))
                     return hits[:limit]
             except Exception as e:
+                error_reason = str(e)
                 logger.warn("reverse_search.visual.ddgs_error", error=str(e))
 
-        # Only return synthetic fallback hits in benchmark test mode
-        if os.environ.get("FORENSIC_BENCHMARK_MODE") != "1":
-            return hits[:limit]
-
-        return self._fallback_hits(query, limit)
+        self.last_status = {
+            "source_connector": "reverse_visual_search",
+            "status": "error" if error_reason else ("empty" if HAS_DDGS else "unavailable"),
+            "result_count": 0,
+            "failure_reason": error_reason or ("No public visual matches returned" if HAS_DDGS else "DuckDuckGo image search is unavailable"),
+        }
+        return []
 
     def _fallback_hits(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         # Benchmark Mode Only
+        if os.environ.get("FORENSIC_BENCHMARK_MODE") != "1":
+            return []
         results = [
             {
                 "platform": "reverse_visual_search",
@@ -84,7 +114,13 @@ class VisualSearchConnector:
                 "thumbnail_url": "https://reuters.com/images/delhi-sample.jpg",
                 "title": f"Visual Match: Archival ground photography matching {query}",
                 "text": f"High-confidence visual feature match corresponding to {query}.",
-                "created_utc": "2026-08-18T08:00:00Z",
+                "published_at": "2021-01-01T00:00:00Z",
+                "timestamp_type": "published",
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "media_verification": "not_downloaded",
+                "evidence_status": "fixture",
+                "source_connector": "reverse_visual_search",
+                "is_synthetic": True,
                 "has_media": True
             }
         ]
@@ -96,7 +132,13 @@ class VisualSearchConnector:
                 "thumbnail_url": f"https://photo_wire_{i % 5 + 1}.org/thumbs/{2000 + i}.jpg",
                 "title": f"Visual Match #{i + 1}: Archive image matching {query}",
                 "text": f"Secondary visual corroboration wire photo #{i + 1} matching {query}.",
-                "created_utc": f"2026-08-18T{7 + (i % 10):02d}:{(i * 9) % 60:02d}:00Z",
+                "published_at": f"2021-01-01T{7 + (i % 10):02d}:{(i * 9) % 60:02d}:00Z",
+                "timestamp_type": "published",
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "media_verification": "not_downloaded",
+                "evidence_status": "fixture",
+                "source_connector": "reverse_visual_search",
+                "is_synthetic": True,
                 "has_media": True
             })
         return results
@@ -109,7 +151,7 @@ class VisualSearchConnector:
                 ExternalMatch(
                     url=h.get("post_url") or h.get("thumbnail_url", ""),
                     source="reverse_visual_search",
-                    date_found=h.get("created_utc"),
+                    date_found=h.get("published_at"),
                     page_title=h.get("title")
                 )
             )
@@ -117,4 +159,3 @@ class VisualSearchConnector:
  
  
 ReverseImageSearchClient = VisualSearchConnector
-

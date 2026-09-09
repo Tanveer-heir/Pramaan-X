@@ -24,10 +24,14 @@ def test_chronology_engine_patient_zero_and_50_places():
         candidates.append({
             "platform": platforms[i % len(platforms)],
             "account": f"venue_account_{i}",
-            "post_url": f"https://example.com/post/{i}",
+            "post_url": f"https://newsportal.in/post/{i}",
             "title": f"Incident report #{i}",
             "text": f"Footage and eyewitness details regarding event #{i}",
-            "created_utc": t.isoformat(),
+            "published_at": t.isoformat(),
+            "timestamp_type": "published",
+            "media_verification": "exact",
+            "evidence_status": "verified",
+            "is_synthetic": False,
             "similarity": 0.85 - (i * 0.002)
         })
 
@@ -72,9 +76,9 @@ def test_chronology_engine_patient_zero_and_50_places():
 def test_chronology_engine_deduplication():
     # Duplicate URLs should be collapsed
     candidates = [
-        {"platform": "x", "account": "@acc1", "post_url": "https://x.com/post/1", "similarity": 0.9, "created_utc": "2026-08-18T08:00:00Z"},
-        {"platform": "x", "account": "@acc1", "post_url": "https://x.com/post/1", "similarity": 0.9, "created_utc": "2026-08-18T08:00:00Z"},
-        {"platform": "reddit", "account": "u/user2", "post_url": "https://reddit.com/post/2", "similarity": 0.8, "created_utc": "2026-08-18T08:30:00Z"},
+        {"platform": "x", "account": "@acc1", "post_url": "https://x.com/post/1", "similarity": 0.9, "published_at": "2026-08-18T08:00:00Z", "timestamp_type": "platform_decoded", "media_verification": "exact", "evidence_status": "verified", "is_synthetic": False},
+        {"platform": "x", "account": "@acc1", "post_url": "https://x.com/post/1", "similarity": 0.9, "published_at": "2026-08-18T08:00:00Z", "timestamp_type": "platform_decoded", "media_verification": "exact", "evidence_status": "verified", "is_synthetic": False},
+        {"platform": "reddit", "account": "u/user2", "post_url": "https://reddit.com/post/2", "similarity": 0.8, "published_at": "2026-08-18T08:30:00Z", "timestamp_type": "published", "media_verification": "near_duplicate", "evidence_status": "verified", "is_synthetic": False},
     ]
     publications, origin, summary = ChronologyEngine.build_publication_chronology(candidates)
     assert len(publications) == 2

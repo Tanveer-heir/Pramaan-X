@@ -1,7 +1,7 @@
-"""
-Chronological Dissemination & Origin Tracing Engine (§2.4).
-Parses timestamps, dedupes candidates, isolates Primary Origin (Patient Zero),
-and maps the sequence of the first 50 published places.
+"""Chronological dissemination and conservative origin tracing.
+
+Only verified media occurrences with explicitly typed publication timestamps are
+eligible for the earliest-observed lead and publication sequence.
 """
 
 from typing import List, Dict, Any, Tuple, Optional
@@ -9,10 +9,15 @@ from datetime import datetime, timezone, timedelta
 import re
 from src.common.schemas import PublicationRecord, EarliestCandidate
 from src.common.logger import logger
+from src.source_attribution.evidence import (
+    candidate_has_usable_timestamp,
+    candidate_is_verified,
+    normalize_candidate,
+)
 
 
 class ChronologyEngine:
-    """Extracts chronological sequence of publications to pinpoint Patient Zero."""
+    """Extracts a chronology without making unsupported Patient Zero claims."""
 
     @classmethod
     def extract_forensic_timestamp(
@@ -21,80 +26,13 @@ class ChronologyEngine:
         url: str = "",
         text: str = "",
         fallback_idx: int = 0
-    ) -> datetime:
+    ) -> Optional[datetime]:
         """
-        Forensically extracts the earliest corroborated publication timestamp:
-        1. Decodes Twitter Snowflake IDs in URLs (millisecond-exact origin timestamp).
-        2. Parses ISO date patterns in URLs (e.g. /2021/01/26/ or 2021-01-26).
-        3. Parses textual date stamps in snippets (e.g. Jan 26, 2021).
-        4. Parses ISO timestamp strings (e.g. YouTube publish dates).
-        5. Falls back to calibrated progression if unstated.
+        Parses an explicitly supplied connector timestamp.  URL slugs, snippets,
+        retrieval time, and fallback counters are intentionally ignored here;
+        connectors must establish those provenance types before chronology.
         """
-        # 1. If explicit historical timestamp is provided by source metadata/fixture (>24h old), respect it
-        if ts_str:
-            clean = ts_str.replace("Z", "+00:00")
-            try:
-                dt = datetime.fromisoformat(clean)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                now_utc = datetime.now(timezone.utc)
-                if abs((now_utc - dt).total_seconds()) > 86400:
-                    return dt
-            except Exception:
-                pass
-
-        # 2. Twitter / X Snowflake ID extraction: status/<snowflake> or events/<snowflake>
-        if url and ("x.com" in url or "twitter.com" in url):
-            m = re.search(r'/(?:status|events)/(\d{15,20})', url)
-            if m:
-                try:
-                    snowflake = int(m.group(1))
-                    ts_ms = (snowflake >> 22) + 1288834974657
-                    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-                    if 2006 <= dt.year <= 2030:
-                        return dt
-                except Exception:
-                    pass
-
-        # 3. Date pattern in URL: /YYYY/MM/DD/ or /YYYY-MM-DD
-        if url:
-            url_date = re.search(r'[/-](20[0-2][0-9])[/-](0[1-9]|1[0-2])[/-](0[1-9]|[12][0-9]|3[01])', url)
-            if url_date:
-                try:
-                    y, m, d = int(url_date.group(1)), int(url_date.group(2)), int(url_date.group(3))
-                    return datetime(y, m, d, 8, 0, 0, tzinfo=timezone.utc)
-                except Exception:
-                    pass
-
-        # 4. Text snippet date parsing (e.g. Jan 26, 2021 or 26 Jan 2021 or 26 January 2021)
-        months = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
-        }
-        if text:
-            # Format A: Month DD, YYYY (e.g. Jan 26, 2021)
-            m_text = re.search(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+([0-3]?[0-9]),?\s+(20[0-2][0-9])\b', text, re.I)
-            if m_text:
-                try:
-                    mo = months[m_text.group(1)[:3].lower()]
-                    day = int(m_text.group(2))
-                    yr = int(m_text.group(3))
-                    return datetime(yr, mo, day, 10, 0, 0, tzinfo=timezone.utc)
-                except Exception:
-                    pass
-
-            # Format B: DD Month YYYY (e.g. 26 Jan 2021 or 26 January 2021)
-            m_text_b = re.search(r'\b([0-3]?[0-9])\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20[0-2][0-9])\b', text, re.I)
-            if m_text_b:
-                try:
-                    day = int(m_text_b.group(1))
-                    mo = months[m_text_b.group(2)[:3].lower()]
-                    yr = int(m_text_b.group(3))
-                    return datetime(yr, mo, day, 10, 0, 0, tzinfo=timezone.utc)
-                except Exception:
-                    pass
-
-        # 5. Valid ISO timestamp string (even if recent)
+        # 1. If an explicit timestamp is provided by source metadata, respect it.
         if ts_str:
             clean = ts_str.replace("Z", "+00:00")
             try:
@@ -105,13 +43,11 @@ class ChronologyEngine:
             except Exception:
                 pass
 
-        # 6. Fallback date progression
-        base = datetime(2026, 8, 18, 7, 0, 0, tzinfo=timezone.utc)
-        return base + timedelta(minutes=fallback_idx * 14)
+        return None
 
     @staticmethod
-    def parse_iso_or_fallback(ts_str: Optional[str], fallback_idx: int = 0) -> datetime:
-        """Parses an ISO timestamp string or synthesizes a calibrated chronological timestamp."""
+    def parse_iso_or_fallback(ts_str: Optional[str], fallback_idx: int = 0) -> Optional[datetime]:
+        """Parse an ISO timestamp; return ``None`` when it is not observed."""
         if ts_str:
             clean = ts_str.replace("Z", "+00:00")
             try:
@@ -122,9 +58,7 @@ class ChronologyEngine:
             except Exception:
                 pass
         
-        # Fallback date progression: 2026-08-18 07:00 UTC + increments
-        base = datetime(2026, 8, 18, 7, 0, 0, tzinfo=timezone.utc)
-        return base + timedelta(minutes=fallback_idx * 14)
+        return None
 
     @classmethod
     def format_elapsed(cls, delta: timedelta) -> str:
@@ -171,16 +105,25 @@ class ChronologyEngine:
             except Exception:
                 min_allowed_dt = None
 
-        # 1. Normalize and deduplicate candidates by URL or (platform, account, title)
+        # 1. Normalize and deduplicate only candidates which have passed the
+        # media verification gate.  A text hit, fixture, placeholder, connector
+        # error, or retrieval-only observation is an investigative lead, never a
+        # publication in an origin chronology.
         seen_keys = set()
         deduped = []
 
         for idx, c in enumerate(candidates):
-            url = c.get("post_url") or c.get("url") or ""
-            platform = c.get("platform", "unknown")
-            account = c.get("account", "unknown")
-            title = c.get("title", "")
-            snippet = c.get("text") or c.get("snippet", "")
+            normalized = normalize_candidate(c, str(c.get("source_connector") or c.get("platform") or "unknown"))
+            if not candidate_is_verified(normalized):
+                continue
+            if not candidate_has_usable_timestamp(normalized):
+                continue
+
+            url = normalized.get("post_url") or normalized.get("url") or ""
+            platform = normalized.get("platform", "unknown")
+            account = normalized.get("account", "unknown")
+            title = normalized.get("title", "")
+            snippet = normalized.get("text") or normalized.get("snippet", "")
             norm_key = url if url else f"{platform}:{account}:{title[:30]}"
 
             if norm_key in seen_keys:
@@ -188,38 +131,46 @@ class ChronologyEngine:
             seen_keys.add(norm_key)
 
             # Extract or assign similarity score
-            sim = similarity_map.get(norm_key)
+            sim = similarity_map.get(norm_key) or similarity_map.get(url)
             if sim is None:
-                sim = c.get("similarity", 0.50)
+                sim = normalized.get("similarity", 0.50)
 
             # Filter out non-matching noise
-            if sim < min_similarity:
+            if sim < min_similarity and normalized.get("media_verification") not in {"exact", "near_duplicate"}:
                 continue
 
-            # Forensically extract earliest corroborated timestamp
-            ts_str = c.get("created_utc") or c.get("date_found") or c.get("timestamp")
-            dt = cls.extract_forensic_timestamp(ts_str, url=url, text=f"{title} {snippet}", fallback_idx=idx)
+            # Use only a timestamp explicitly supplied by a connector and keep
+            # its provenance.  Never parse a retrieval time as publication time.
+            ts_str = normalized.get("published_at")
+            try:
+                clean = str(ts_str).replace("Z", "+00:00")
+                dt = datetime.fromisoformat(clean)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
 
             # Filter out anachronistic results dated long before the incident
             if min_allowed_dt and dt < min_allowed_dt:
                 logger.debug("chronology.filtered_anachronism", url=url[:50], dt=dt.isoformat(), min_allowed=min_allowed_dt.isoformat())
                 continue
 
-            direct_url = c.get("origin_post_url") or url
-            cand_plat = c.get("platform", platform)
-            if c.get("origin_post_url") and ("x.com" in c["origin_post_url"] or "twitter.com" in c["origin_post_url"]):
+            direct_url = normalized.get("origin_post_url") or url
+            cand_plat = normalized.get("platform", platform)
+            if normalized.get("origin_post_url") and ("x.com" in normalized["origin_post_url"] or "twitter.com" in normalized["origin_post_url"]):
                 cand_plat = "x"
 
             deduped.append({
-                "candidate": c,
+                "candidate": normalized,
                 "dt": dt,
                 "similarity": sim,
                 "url": direct_url,
                 "platform": cand_plat,
-                "account": c.get("account", account),
+                "account": normalized.get("account", account),
                 "title": title,
-                "snippet": c.get("text") or c.get("snippet", ""),
-                "has_media": bool(c.get("has_media") or c.get("media_verified"))
+                "snippet": normalized.get("text") or normalized.get("snippet", ""),
+                "has_media": True,
+                "timestamp_type": normalized.get("timestamp_type"),
             })
 
         # 2. Sort strictly chronologically: earliest to latest
@@ -227,15 +178,16 @@ class ChronologyEngine:
 
         if not deduped:
             logger.warn("chronology.no_valid_candidates")
-            return [], None, {}
+            return [], None, {
+                "total_candidates_scanned": len(candidates),
+                "verified_publications_tracked": 0,
+                "timestamp_provenance": [],
+            }
 
-        # 3. Identify Primary Origin (Patient Zero)
-        # Prioritize candidates with verified media or high similarity that match the incident
-        media_matches = [d for d in deduped if d.get("has_media") and d["similarity"] >= 0.60]
-        if media_matches:
-            first_entry = media_matches[0]
-        else:
-            first_entry = deduped[0]
+        # 3. Identify the earliest observed verified media occurrence.  The
+        # confidence is deliberately conservative: exact media plus a connector
+        # publication/archive timestamp is needed for a high-confidence label.
+        first_entry = deduped[0]
 
         origin_dt = first_entry["dt"]
         origin_candidate = EarliestCandidate(
@@ -244,7 +196,12 @@ class ChronologyEngine:
             account=first_entry["account"],
             platform=first_entry["platform"],
             timestamp=origin_dt.isoformat(),
-            confidence="high" if first_entry["similarity"] >= 0.65 else "moderate",
+            confidence=(
+                "high"
+                if first_entry["candidate"].get("media_verification") == "exact"
+                and first_entry.get("timestamp_type") in {"published", "archive_observed"}
+                else "moderate"
+            ),
             title=first_entry["title"]
         )
 
@@ -304,7 +261,17 @@ class ChronologyEngine:
             "total_span_hours": round(time_span_hours, 1),
             "dissemination_velocity_posts_per_hour": velocity,
             "active_platforms_breakdown": platform_counts,
-            "first_50_places_count": len(publications)
+            "first_50_places_count": len(publications),
+            "timestamp_provenance": [
+                {
+                    "url": item["url"],
+                    "published_at": item["dt"].isoformat(),
+                    "timestamp_type": item["timestamp_type"],
+                    "media_verification": item["candidate"].get("media_verification"),
+                    "source_connector": item["candidate"].get("source_connector"),
+                }
+                for item in timeline_candidates[:max_publications]
+            ]
         }
 
         logger.info(

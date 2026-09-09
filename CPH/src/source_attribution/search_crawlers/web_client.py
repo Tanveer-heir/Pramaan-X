@@ -27,15 +27,29 @@ class WebSearchClient:
 
     def __init__(self, max_results: int = 50):
         self.max_results = max_results
+        self.last_status: Dict[str, Any] = {
+            "source_connector": "open_web",
+            "status": "unavailable" if not HAS_DDGS else "not_run",
+            "result_count": 0,
+            "failure_reason": "DuckDuckGo web search is unavailable" if not HAS_DDGS else None,
+        }
 
     async def search(self, query: str, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
         limit = max_results or self.max_results
         logger.info("crawler.web.search", query=query, limit=limit)
 
         if os.environ.get("FORENSIC_BENCHMARK_MODE") == "1":
-            return self._fallback_fixtures(query, limit)
+            results = self._fallback_fixtures(query, limit)
+            self.last_status = {
+                "source_connector": "open_web",
+                "status": "fixture",
+                "result_count": len(results),
+                "failure_reason": "benchmark fixture enabled",
+            }
+            return results
 
         results = []
+        error_reason = None
 
         if HAS_DDGS:
             try:
@@ -45,7 +59,7 @@ class WebSearchClient:
                 for item in raw_results:
                     url = item.get("href") or item.get("link") or ""
                     parsed = urlparse(url)
-                    domain = parsed.netloc or "web_source"
+                    domain = parsed.netloc or ""
                     title = item.get("title", "")
                     body = item.get("body", "")
                     combined_text = f"{title}. {body}".strip()
@@ -91,7 +105,13 @@ class WebSearchClient:
                         "post_url": url,
                         "title": title,
                         "text": combined_text,
-                        "created_utc": datetime.now(timezone.utc).isoformat(),
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "published_at": None,
+                        "timestamp_type": "retrieved_at",
+                        "media_verification": "not_downloaded",
+                        "evidence_status": "unverified",
+                        "source_connector": "open_web",
+                        "is_synthetic": False,
                         "domain": domain
                     }
                     if suspect_acc:
@@ -100,26 +120,42 @@ class WebSearchClient:
                     results.append(cand_dict)
 
                 if results:
+                    self.last_status = {
+                        "source_connector": "open_web",
+                        "status": "ok",
+                        "result_count": len(results),
+                    }
                     logger.info("crawler.web.success", count=len(results))
                     return results[:limit]
             except Exception as e:
+                error_reason = str(e)
                 logger.warn("crawler.web.ddgs_error", error=str(e))
 
-        if not results:
-            logger.info("crawler.web.fallback_activated", query=query)
-            return self._fallback_fixtures(query, limit)
-
-        return results[:limit]
+        self.last_status = {
+            "source_connector": "open_web",
+            "status": "error" if error_reason else ("empty" if HAS_DDGS else "unavailable"),
+            "result_count": 0,
+            "failure_reason": error_reason or ("No public web results returned" if HAS_DDGS else "DuckDuckGo web search is unavailable"),
+        }
+        return []
 
     def _fallback_fixtures(self, query: str, limit: int) -> List[Dict[str, Any]]:
         # Forensic fallback fixtures scaled for demo and offline evaluations (Benchmark Mode Only)
+        if os.environ.get("FORENSIC_BENCHMARK_MODE") != "1":
+            return []
         results = [{
             "platform": "open_web",
             "account": "regionalnewsportal.in",
             "post_url": f"https://www.regionalnewsportal.in/news/breaking-{abs(hash(query)) % 10000}",
             "title": f"Breaking: Early report on incident involving {query}",
             "text": f"Eyewitness footage and initial reports emerging regarding {query}. Authorities arriving on scene.",
-            "created_utc": "2026-08-18T07:15:00Z",
+            "published_at": "2021-01-01T07:15:00Z",
+            "timestamp_type": "published",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "media_verification": "not_downloaded",
+            "evidence_status": "fixture",
+            "source_connector": "open_web",
+            "is_synthetic": True,
             "domain": "regionalnewsportal.in"
         }]
         for i in range(1, min(limit, 50)):
@@ -129,7 +165,13 @@ class WebSearchClient:
                 "post_url": f"https://www.news_outlet_{i % 7 + 1}.in/article/report-{1000 + i}",
                 "title": f"Report #{i + 1}: Emerging coverage on incident concerning {query}",
                 "text": f"Ground reporting and eyewitness footage on {query}. Investigation ongoing by local authorities.",
-                "created_utc": f"2026-08-18T{6 + (i % 12):02d}:{(i * 7) % 60:02d}:00Z",
+                "published_at": f"2021-01-01T{6 + (i % 12):02d}:{(i * 7) % 60:02d}:00Z",
+                "timestamp_type": "published",
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "media_verification": "not_downloaded",
+                "evidence_status": "fixture",
+                "source_connector": "open_web",
+                "is_synthetic": True,
                 "domain": f"news_outlet_{i % 7 + 1}.in"
             })
         return results

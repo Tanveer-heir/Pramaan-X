@@ -28,14 +28,27 @@ class RedditSearchClient:
     def __init__(self, user_agent: Optional[str] = None):
         self.user_agent = user_agent or settings.REDDIT_USER_AGENT or "cph-attribution-agent:v1.0"
         self.timeout = 8.0
+        self.last_status: Dict[str, Any] = {
+            "source_connector": "reddit",
+            "status": "not_run",
+            "result_count": 0,
+        }
 
     async def search(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         logger.info("crawler.reddit.public_search", query=query, limit=limit)
 
         if os.environ.get("FORENSIC_BENCHMARK_MODE") == "1":
-            return self._fallback_fixtures(query, limit)
+            results = self._fallback_fixtures(query, limit)
+            self.last_status = {
+                "source_connector": "reddit",
+                "status": "fixture",
+                "result_count": len(results),
+                "failure_reason": "benchmark fixture enabled",
+            }
+            return results
 
         results = []
+        error_reason = None
 
         # 1. Attempt Reddit Public JSON API
         headers = {
@@ -61,11 +74,14 @@ class RedditSearchClient:
                         created_utc = post.get("created_utc")
                         ts_iso = (
                             datetime.fromtimestamp(created_utc, timezone.utc).isoformat()
-                            if created_utc else datetime.now(timezone.utc).isoformat()
+                            if created_utc else None
                         )
                         title = post.get("title", "")
                         selftext = post.get("selftext", "")
-                        author = post.get("author", "unknown_user")
+                        author = post.get("author")
+                        subreddit = post.get("subreddit_name_prefixed") or (
+                            f"r/{post.get('subreddit')}" if post.get("subreddit") else ""
+                        )
                         permalink = post.get("permalink", "")
                         post_url = f"https://reddit.com{permalink}" if permalink else ""
                         score = post.get("score", 0)
@@ -78,20 +94,38 @@ class RedditSearchClient:
 
                         results.append({
                             "platform": "reddit",
-                            "account": f"u/{author}",
+                            "account": f"u/{author}" if author else subreddit,
                             "post_url": post_url,
                             "title": title,
                             "text": f"{title}. {selftext}".strip(),
-                            "created_utc": ts_iso,
+                            "published_at": ts_iso,
+                            "timestamp_type": "published" if ts_iso else "unknown",
+                            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                            "media_verification": "not_downloaded",
+                            "evidence_status": "unverified",
+                            "source_connector": "reddit",
+                            "is_synthetic": False,
                             "score": score,
                             "has_media": has_media
                         })
 
                     if results:
+                        self.last_status = {
+                            "source_connector": "reddit",
+                            "status": "ok",
+                            "result_count": len(results),
+                        }
                         logger.info("crawler.reddit.success", count=len(results))
                         return results[:limit]
         except Exception as e:
+            error_reason = str(e)
             logger.warn("crawler.reddit.network_or_ratelimit", error=str(e))
+            self.last_status = {
+                "source_connector": "reddit",
+                "status": "error",
+                "result_count": 0,
+                "failure_reason": str(e),
+            }
 
         # 2. Free DuckDuckGo Reddit Site Search
         if HAS_DDGS and len(results) < limit:
@@ -106,7 +140,12 @@ class RedditSearchClient:
 
                     # Extract subreddit if present (e.g. reddit.com/r/india/...)
                     sub_match = re.search(r'reddit\.com/r/([^/]+)', href)
-                    account = f"u/{sub_match.group(1)}" if sub_match else "u/reddit_user"
+                    user_match = re.search(r'reddit\.com/user/([^/]+)', href)
+                    account = (
+                        f"r/{sub_match.group(1)}" if sub_match
+                        else f"u/{user_match.group(1)}" if user_match
+                        else ""
+                    )
 
                     # Clean title
                     clean_title = re.sub(r'\s*[-:|]\s*Reddit.*$', '', title, flags=re.I).strip()
@@ -117,26 +156,53 @@ class RedditSearchClient:
                         "post_url": href,
                         "title": clean_title,
                         "text": f"{clean_title}. {body}".strip(),
-                        "created_utc": datetime.now(timezone.utc).isoformat(),
+                        "published_at": None,
+                        "timestamp_type": "retrieved_at",
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "media_verification": "not_downloaded",
+                        "evidence_status": "unverified",
+                        "source_connector": "reddit",
+                        "is_synthetic": False,
                         "score": 42,
                         "has_media": True if ("video" in clean_title.lower() or "photo" in clean_title.lower()) else False
                     })
                 if results:
+                    self.last_status = {
+                        "source_connector": "reddit",
+                        "status": "degraded",
+                        "result_count": len(results),
+                        "failure_reason": "Results obtained from public web index; publication dates unavailable",
+                    }
                     return results[:limit]
             except Exception as e:
+                error_reason = error_reason or str(e)
                 logger.warn("crawler.reddit.ddgs_fallback_error", error=str(e))
 
-        return self._fallback_fixtures(query, limit)
+        self.last_status = {
+            "source_connector": "reddit",
+            "status": "error" if error_reason else ("empty" if HAS_DDGS else "unavailable"),
+            "result_count": 0,
+            "failure_reason": error_reason or ("No public Reddit results returned" if HAS_DDGS else "Reddit public API and DuckDuckGo search are unavailable"),
+        }
+        return []
 
     def _fallback_fixtures(self, query: str, limit: int) -> List[Dict[str, Any]]:
         # 3. Scaled Forensic Fallback Fixtures (Benchmark Mode Only)
+        if os.environ.get("FORENSIC_BENCHMARK_MODE") != "1":
+            return []
         results = [{
             "platform": "reddit",
             "account": "u/city_watcher_chd",
             "post_url": f"https://reddit.com/r/india/comments/chd_incident_{abs(hash(query)) % 1000}",
             "title": f"Footage of protest and rally regarding {query}",
             "text": f"Clip circulating on Telegram groups about {query}. Can anyone verify?",
-            "created_utc": "2026-08-18T11:20:00Z",
+            "published_at": "2021-01-01T11:20:00Z",
+            "timestamp_type": "published",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "media_verification": "not_downloaded",
+            "evidence_status": "fixture",
+            "source_connector": "reddit",
+            "is_synthetic": True,
             "score": 184
         }]
         for i in range(1, min(limit, 50)):
@@ -146,7 +212,13 @@ class RedditSearchClient:
                 "post_url": f"https://reddit.com/r/india/comments/post_{2000 + i}",
                 "title": f"Reddit discussion #{i + 1} regarding {query}",
                 "text": f"Community verification thread #{i + 1} discussing footage and eyewitness posts around {query}.",
-                "created_utc": f"2026-08-18T{8 + (i % 12):02d}:{(i * 11) % 60:02d}:00Z",
+                "published_at": f"2021-01-01T{8 + (i % 12):02d}:{(i * 11) % 60:02d}:00Z",
+                "timestamp_type": "published",
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "media_verification": "not_downloaded",
+                "evidence_status": "fixture",
+                "source_connector": "reddit",
+                "is_synthetic": True,
                 "score": 50 + (i * 3)
             })
         return results
