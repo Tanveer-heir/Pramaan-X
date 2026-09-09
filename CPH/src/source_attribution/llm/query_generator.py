@@ -4,6 +4,7 @@ from typing import Dict, List, Any
 import re
 from src.common.config import settings
 from src.common.logger import logger
+from src.source_attribution.evidence import redact_secrets
 
 
 class QueryGenerator:
@@ -20,11 +21,14 @@ class QueryGenerator:
                 from google import genai
                 self._genai_client = genai.Client(api_key=api_key)
             except Exception as e:
-                logger.debug("query_gen.client_init_failed", error=str(e))
+                logger.debug("query_gen.client_init_failed", error=str(redact_secrets(str(e))))
 
     def generate_queries(self, description: str) -> Dict[str, List[str]]:
         """Generates platform search queries using LLM if available, falling back to dynamic token extraction."""
+        description = (description or "").strip()
         logger.info("llm.generate_queries", desc_len=len(description))
+        if not description or description.lower().startswith("no model-generated visual description"):
+            return {}
 
         # 1. Attempt dynamic LLM query generation (1 call, ~150 tokens)
         if self._genai_client:
@@ -51,7 +55,7 @@ class QueryGenerator:
                         if resp and resp.text:
                             break
                     except Exception as me:
-                        logger.debug("llm.query_gen_model_failed", model=m_name, error=str(me))
+                        logger.debug("llm.query_gen_model_failed", model=m_name, error=str(redact_secrets(str(me))))
 
                 if not resp or not resp.text:
                     raise RuntimeError("All Gemini query models failed")
@@ -62,11 +66,18 @@ class QueryGenerator:
                     text = text.split("```")[-1].split("```")[0].strip()
 
                 queries = json.loads(text)
+                # Never pass blank, generated, or non-string LLM output to a
+                # public connector.  Query provenance is kept by the pipeline.
+                for key, values in list(queries.items()):
+                    if not isinstance(values, list):
+                        queries[key] = []
+                    else:
+                        queries[key] = [str(v).strip() for v in values if isinstance(v, str) and str(v).strip()]
                 if all(k in queries for k in ["web", "reddit", "x", "youtube"]):
                     logger.info("llm.queries_generated_via_llm", web_count=len(queries["web"]))
                     return queries
             except Exception as e:
-                logger.warn("llm.query_gen_llm_fallback", error=str(e))
+                logger.warn("llm.query_gen_llm_fallback", error=str(redact_secrets(str(e))))
 
         # 2. Dynamic Fallback: Extract proper nouns and salient tokens (NO hardcoded nouns)
         proper_nouns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', description)
@@ -74,7 +85,8 @@ class QueryGenerator:
             "in this", "the", "at least", "several", "consistent", "this outdoor", "scene",
             "an", "a", "he", "she", "it", "they", "there", "here", "his", "her", "their",
             "this", "that", "these", "those", "image", "photo", "picture", "video",
-            "background", "foreground", "visible", "features", "showing", "holding", "wearing"
+            "background", "foreground", "visible", "features", "showing", "holding", "wearing",
+            "user", "provided", "filename", "exif", "make", "model", "software", "datetime", "original", "ocr", "text",
         }
         filtered_proper = [
             p for p in proper_nouns
@@ -86,12 +98,16 @@ class QueryGenerator:
             "this", "that", "with", "from", "were", "what", "which", "there", "image", "video",
             "showing", "scene", "consistent", "featuring", "visible", "large", "outdoor",
             "holding", "front", "least", "other", "several", "depicted", "wearing", "adorned",
-            "resembling", "depicts", "features", "plain", "identifiable", "elaborate", "traditional"
+            "resembling", "depicts", "features", "plain", "identifiable", "elaborate", "traditional",
+            "user", "provided", "filename", "exif", "make", "model", "software", "datetime", "original", "ocr", "text",
+            "resolution", "color", "profile"
         }
         salient_keywords = [w for w in words if w not in stop_words]
 
         p_term = " ".join(filtered_proper[:2]) if filtered_proper else " ".join(salient_keywords[:2])
         s_term = " ".join(salient_keywords[:3]) if salient_keywords else p_term
+        if not p_term.strip() and not s_term.strip():
+            return {}
 
         return {
             "web": [

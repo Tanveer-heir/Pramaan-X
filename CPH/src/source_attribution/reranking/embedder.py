@@ -175,7 +175,8 @@ class MultimodalEmbedder:
                     "platform": c.get("platform", "unknown"),
                     "account": c.get("account", "unknown"),
                     "post_url": c.get("post_url", ""),
-                    "created_utc": c.get("created_utc", "")
+                    "published_at": c.get("published_at"),
+                    "timestamp_type": c.get("timestamp_type", "unknown"),
                 })
 
                 # Helper lambda for bound calibration
@@ -250,7 +251,7 @@ class MultimodalEmbedder:
                     account=acc,
                     similarity=score_rounded,
                     post_url=url if url else None,
-                    timestamp=c.get("created_utc"),
+                    timestamp=c.get("published_at"),
                     post_text=c.get("text") or title,
                     has_media=bool(c.get("has_media"))
                 )

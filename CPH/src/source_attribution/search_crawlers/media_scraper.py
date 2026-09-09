@@ -202,6 +202,7 @@ class MediaScraper:
             if fast_media:
                 c["media_url"] = fast_media
                 c["has_media"] = True
+                c.setdefault("media_verification", "not_downloaded")
 
             # If still missing media OR missing suspect account for an open web/YouTube hit, queue for scrape
             if (not c.get("has_media") or not c.get("suspect_account")) and c.get("platform") in ("open_web", "news", "youtube") and url:
@@ -217,6 +218,7 @@ class MediaScraper:
                     if isinstance(res, str) and res.startswith("http"):
                         c["media_url"] = res
                         c["has_media"] = True
+                        c.setdefault("media_verification", "not_downloaded")
 
         media_count = sum(1 for c in candidates if c.get("has_media"))
         logger.info("media_scraper.enrich_complete", total_with_media=media_count)
@@ -237,8 +239,16 @@ class MediaScraper:
         if not os.path.exists(query_image_path):
             return
 
-        query_image_vec = embedder.embed_image(query_image_path)
+        try:
+            query_image_vec = embedder.embed_image(query_image_path)
+        except Exception as exc:
+            logger.debug("media_scraper.query_embedding_failed", error=str(exc))
+            query_image_vec = None
         if query_image_vec is None:
+            for c in candidates:
+                if c.get("media_url") and not c.get("is_synthetic"):
+                    c["media_verification"] = "failed"
+                    c["failure_reason"] = "query media embedding unavailable"
             return
 
         # Select candidates that have media URLs, prioritized by similarity
@@ -250,6 +260,8 @@ class MediaScraper:
         logger.info("media_scraper.verify_start", candidates_to_verify=len(verify_pool))
 
         for c in verify_pool:
+            if c.get("is_synthetic") or c.get("evidence_status") == "fixture":
+                continue
             m_url = c["media_url"]
             try:
                 # Fast download of thumbnail / media frame
@@ -268,10 +280,17 @@ class MediaScraper:
                     if cand_vec:
                         raw_sim = sum(a * b for a, b in zip(query_image_vec, cand_vec))
                         c["visual_cosine"] = round(raw_sim, 3)
-                        
-                        # Visual match threshold for news photo / video frame
-                        if raw_sim >= 0.70:
-                            c["media_verified"] = True
+                        if raw_sim >= 0.90:
+                            verification = "exact"
+                        elif raw_sim >= 0.80:
+                            verification = "near_duplicate"
+                        else:
+                            verification = "failed"
+                        c["media_verification"] = verification
+                        c["media_verified"] = verification in {"exact", "near_duplicate"}
+                        if c["media_verified"]:
+                            c["evidence_status"] = "verified"
+                            c["is_synthetic"] = False
                             boosted_score = min(0.96, max(c.get("similarity", 0.0), raw_sim * 1.05))
                             c["similarity"] = round(boosted_score, 3)
                             title = c.get("title", "")
@@ -283,5 +302,15 @@ class MediaScraper:
                                 visual_cosine=raw_sim,
                                 final_sim=c["similarity"]
                             )
+                        else:
+                            c["failure_reason"] = "downloaded media did not meet visual similarity threshold"
+                    else:
+                        c["media_verification"] = "failed"
+                        c["failure_reason"] = "candidate image embedding unavailable"
+                else:
+                    c["media_verification"] = "failed"
+                    c["failure_reason"] = "candidate media could not be downloaded"
             except Exception as e:
+                c["media_verification"] = "failed"
+                c["failure_reason"] = str(e)
                 logger.debug("media_scraper.verify_failed", url=m_url[:40], error=str(e))

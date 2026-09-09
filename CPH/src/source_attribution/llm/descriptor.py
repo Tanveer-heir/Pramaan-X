@@ -9,6 +9,7 @@ import os
 from PIL import Image
 from src.common.logger import logger
 from src.common.config import settings
+from src.source_attribution.evidence import redact_secrets
 
 # Attempt import of modern google.genai, fallback to legacy google.generativeai
 HAS_GENAI = False
@@ -33,6 +34,7 @@ class MediaDescriptor:
         self.client = None
         self.legacy_model = None
         self.llm_succeeded = False  # Tracks whether last call used LLM vs heuristic fallback
+        self.description_source = "unavailable"
 
         if self.api_key:
             if HAS_GENAI:
@@ -40,14 +42,14 @@ class MediaDescriptor:
                     self.client = genai.Client(api_key=self.api_key)
                     logger.info("llm.gemini_modern_genai.configured")
                 except Exception as e:
-                    logger.warn("llm.genai_init_error", error=str(e))
+                    logger.warn("llm.genai_init_error", error=str(redact_secrets(str(e))))
             elif HAS_LEGACY_GENAI:
                 try:
                     legacy_genai.configure(api_key=self.api_key)
                     self.legacy_model = legacy_genai.GenerativeModel("gemini-2.5-flash")
                     logger.info("llm.gemini_legacy.configured")
                 except Exception as e:
-                    logger.warn("llm.legacy_gemini_init_error", error=str(e))
+                    logger.warn("llm.legacy_gemini_init_error", error=str(redact_secrets(str(e))))
 
     async def describe_media(self, media_path: str) -> str:
         """
@@ -58,6 +60,8 @@ class MediaDescriptor:
 
         # Skip API calls during automated benchmark tests to preserve user's free tier
         if os.environ.get("FORENSIC_BENCHMARK_MODE") == "1":
+            self.llm_succeeded = False
+            self.description_source = "fixture"
             return self._heuristic_description(media_path)
 
         # 1. Try modern google.genai Client
@@ -79,9 +83,10 @@ class MediaDescriptor:
                     if response and response.text:
                         logger.info("llm.gemini.description_success", model=model_name)
                         self.llm_succeeded = True
+                        self.description_source = "gemini"
                         return response.text.strip()
                 except Exception as e:
-                    logger.warn("llm.gemini_model_try_failed", model=model_name, error=str(e))
+                    logger.warn("llm.gemini_model_try_failed", model=model_name, error=str(redact_secrets(str(e))))
 
         # 2. Try legacy google.generativeai if available
         if self.legacy_model is not None and os.path.exists(media_path):
@@ -97,12 +102,14 @@ class MediaDescriptor:
                 if response and response.text:
                     logger.info("llm.legacy_gemini.description_success")
                     self.llm_succeeded = True
+                    self.description_source = "gemini"
                     return response.text.strip()
             except Exception as e:
-                logger.warn("llm.legacy_gemini_error", error=str(e))
+                logger.warn("llm.legacy_gemini_error", error=str(redact_secrets(str(e))))
 
         # 3. Heuristic Computer Vision Fallback (100% Free & Local)
         self.llm_succeeded = False
+        self.description_source = "unavailable"
         logger.warn("llm.all_apis_failed_using_visual_fallback")
         return self._heuristic_description(media_path)
 
@@ -119,7 +126,7 @@ class MediaDescriptor:
                 pass
 
         details_str = f" ({', '.join(details)})" if details else ""
-        return (
-            f"A public street rally and protest gathering{details_str} featuring crowd banners, "
-            f"speakers addressing citizens, and visible demonstration activity circulating across regional channels."
-        )
+        # Dimensions and colour profile are observations, not a scene description.
+        # Returning a neutral value prevents an unavailable model from inventing
+        # an event (for example, calling an unrelated image a protest).
+        return f"No model-generated visual description is available{details_str}."

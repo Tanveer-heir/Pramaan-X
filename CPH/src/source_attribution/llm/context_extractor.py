@@ -46,7 +46,8 @@ class EventContextExtractor:
         cls,
         visual_hits: List[Dict[str, Any]],
         initial_description: str = "",
-        min_visual_similarity: float = 0.60
+        min_visual_similarity: float = 0.60,
+        require_verified: bool = False,
     ) -> Dict[str, Any]:
         """
         Analyzes discovered visual search matches and articles to extract
@@ -57,6 +58,12 @@ class EventContextExtractor:
         # 1. Aggregate textual evidence from visual match URLs, titles, and snippets
         text_corpus = []
         for hit in visual_hits:
+            if require_verified and not (
+                hit.get("is_synthetic") is False
+                and hit.get("evidence_status") == "verified"
+                and hit.get("media_verification") in {"exact", "near_duplicate"}
+            ):
+                continue
             title = hit.get("title", "")
             snippet = hit.get("text", "")
             url = hit.get("post_url") or hit.get("url", "")

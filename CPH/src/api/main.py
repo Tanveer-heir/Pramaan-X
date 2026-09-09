@@ -11,7 +11,7 @@ from pathlib import Path
 import os
 import asyncio
 
-from src.common.schemas import CombinedEvidenceReport, OriginTracingEvidence
+from src.common.schemas import CombinedEvidenceReport
 from src.common.logger import logger
 from src.common.config import settings
 from src.gateway.artifacts import ArtifactRegistry
@@ -20,6 +20,7 @@ from src.gateway.media import MediaValidationError, store_path_once, store_strea
 from src.gateway.models import CapabilitiesResponse, InvestigationResponse
 from src.gateway.orchestrator import UnifiedInvestigationOrchestrator, new_investigation_id
 from src.api.standalone_routes import router as standalone_router
+from src.source_attribution.evidence import SourceAttributionEvidence, redact_secrets
 
 app = FastAPI(
     title="Chandigarh Police Hackathon Section 2 Forensic Gateway",
@@ -61,6 +62,14 @@ class AnalysisRequest(BaseModel):
 
 class AttributionRequest(BaseModel):
     media_path: str = Field(..., description="Local path or URL to submitted media")
+    investigator_context: Optional[str] = Field(
+        None,
+        description="Optional investigator-supplied facts to anchor public search queries",
+    )
+    search_context: Optional[str] = Field(
+        None,
+        description="Backward-compatible alias for investigator context",
+    )
 
 
 class InvestigationRequest(BaseModel):
@@ -216,19 +225,27 @@ async def get_case_report(case_id: str):
 # Source Attribution Dedicated Endpoints
 # ==============================================================================
 
-@app.post("/api/v1/source-attribution/analyze", response_model=OriginTracingEvidence, tags=["Source Attribution"])
+@app.post("/api/v1/source-attribution/analyze", response_model=SourceAttributionEvidence, tags=["Source Attribution"])
 async def run_source_attribution(request: AttributionRequest):
     """Directly executes Source Attribution & Origin Tracing (§2.4)."""
     try:
         from src.source_attribution.pipeline import SourceAttributionPipeline
 
-        evidence = await SourceAttributionPipeline().execute(media_path=request.media_path)
-        return evidence
+        execute_kwargs: Dict[str, Any] = {"media_path": request.media_path}
+        if request.investigator_context is not None:
+            execute_kwargs["investigator_context"] = request.investigator_context
+        if request.search_context is not None:
+            execute_kwargs["search_context"] = request.search_context
+        evidence = await SourceAttributionPipeline().execute(**execute_kwargs)
+        # Return the boundary's native payload, including provenance extensions
+        # that a shared response model would otherwise discard.
+        return evidence.model_dump(mode="json")
     except Exception as e:
-        logger.error("api.attribution_failed", error=str(e))
+        safe_error = str(redact_secrets(str(e)))
+        logger.error("api.attribution_failed", error=safe_error)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Source attribution error: {str(e)}"
+            detail=f"Source attribution error: {safe_error}"
         )
 
 
