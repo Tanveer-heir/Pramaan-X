@@ -127,13 +127,29 @@ def _public_payload(
     return value
 
 
-async def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload)
+async def _post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload)
+    except httpx.RequestError as exc:
+        raise ModuleExecutionError(
+            "UPSTREAM_UNREACHABLE",
+            "Forensic service could not be reached by the CPH gateway.",
+        ) from exc
     if response.status_code != 200:
+        detail = ""
+        try:
+            error_payload = response.json()
+            raw_detail = error_payload.get("detail") if isinstance(error_payload, dict) else None
+            if isinstance(raw_detail, dict):
+                raw_detail = raw_detail.get("message") or raw_detail.get("code")
+            if isinstance(raw_detail, str):
+                detail = f": {raw_detail[:300]}"
+        except (ValueError, json.JSONDecodeError):
+            pass
         raise ModuleExecutionError(
             "UPSTREAM_HTTP_ERROR",
-            f"Forensic service returned HTTP {response.status_code}.",
+            f"Forensic service returned HTTP {response.status_code}{detail}.",
         )
     try:
         data = response.json()
@@ -155,6 +171,7 @@ def build_default_detection_runner(config: GatewayConfig) -> ModuleRunner:
         result = await _post_json(
             f"{config.detection_service_url}/api/v1/detect",
             {"media_path": str(media.local_path)},
+            config.detection_timeout_sec,
         )
         return ExecutionOutput(result=result)
 
@@ -166,6 +183,7 @@ def build_default_prnu_runner(config: GatewayConfig) -> ModuleRunner:
         result = await _post_json(
             f"{config.prnu_service_url}/api/analyse",
             {"media_path": str(media.local_path)},
+            config.prnu_timeout_sec,
         )
         if result.get("ok") is not True or not isinstance(result.get("result"), dict):
             raise ModuleExecutionError(

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "created_at": "2026-09-08T04:31:57.082893+00:00",
-  "dataset_root": "D:\\Strawberries\\prnu-device-attribution-api-handoff\\dataset",
+  "created_at": "2026-09-08T09:26:06.100460+00:00",
+  "dataset_root": "/home/asus/Desktop/Python Stuff/CDG_Hackathon/prnu-device-attribution-api-handoff/dataset",
   "summary": {
     "total_images": 84,
     "devices": {

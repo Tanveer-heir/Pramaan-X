@@ -14,16 +14,23 @@ export interface MediaMetadata {
 
 export interface ModuleEnvelope<T = Record<string, unknown>> {
   status: ModuleStatus;
-  reason: string | null;
-  message: string | null;
-  duration_sec: number;
+  reason?: string | null;
+  message?: string | null;
+  duration_sec?: number;
   result: T | null;
+}
+
+export interface ImageAssessment {
+  label?: string;
+  confidence_level?: string;
+  summary?: string;
 }
 
 export interface ImageDetectionResult {
   schema_version?: string;
-  assessment?: 'LIKELY_AUTHENTIC' | 'SUSPICIOUS' | 'LIKELY_MANIPULATED' | string;
+  assessment?: ImageAssessment | 'LIKELY_AUTHENTIC' | 'SUSPICIOUS' | 'LIKELY_MANIPULATED' | string;
   confidence?: 'LOW' | 'MEDIUM' | 'HIGH' | string;
+  confidence_level?: 'LOW' | 'MEDIUM' | 'HIGH' | string;
   visual_findings?: string[];
   supporting_signals?: Record<string, unknown>;
   limitations?: string[];
@@ -77,6 +84,13 @@ export interface DeviceAttributionResult {
 export interface SourceAttributionResult {
   patient_zero?: {
     url?: string;
+    media_url?: string;
+    source_page_url?: string;
+    probability?: number;
+    confidence?: number;
+    evidence?: string;
+    details?: string;
+    match_type?: string;
     domain?: string;
     timestamp?: string;
     is_authoritative_wire?: boolean;
@@ -87,6 +101,7 @@ export interface SourceAttributionResult {
     inlier_count?: number;
     bounding_box?: [number, number, number, number]; // [x, y, w, h]
     scale_factor?: number;
+    [key: string]: unknown;
   };
   lineage_summary?: {
     total_hops?: number;
@@ -102,6 +117,11 @@ export interface SourceAttributionResult {
     coordinate_offset?: { dx: number; dy: number };
     area_retention_pct?: number;
   };
+  candidate_sources?: Array<Record<string, unknown>>;
+  lineage_path?: Array<Record<string, unknown>>;
+  target?: Record<string, unknown>;
+  target_media?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface ArtifactRef {
@@ -140,14 +160,14 @@ export interface InvestigationRecord {
     device_attribution: ModuleEnvelope<DeviceAttributionResult>;
     source_attribution: ModuleEnvelope<SourceAttributionResult>;
   };
-  artifacts: Record<string, ArtifactRef>;
-  summary: InvestigationSummary;
-  custody: {
+  artifacts?: Record<string, ArtifactRef>;
+  summary?: InvestigationSummary | null;
+  custody?: {
     hash_algorithm: 'sha256';
     entries: CustodyEntry[];
   };
-  warnings: string[];
-  execution_time_sec: number;
+  warnings?: string[];
+  execution_time_sec?: number;
 }
 
 export interface GatewayCapabilities {

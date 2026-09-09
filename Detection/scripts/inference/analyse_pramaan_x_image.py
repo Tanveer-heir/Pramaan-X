@@ -183,7 +183,7 @@ def _request_payload(image_path: Path, model: str, image_format: str | None, ret
     )
     return {
         "model": model,
-        "temperature": 0,
+        "temperature": 1,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},

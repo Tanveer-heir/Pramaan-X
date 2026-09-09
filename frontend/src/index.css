@@ -1,29 +1,29 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #09090b;
-  --color-surface-1: #121215;
-  --color-surface-2: #18181b;
-  --color-surface-3: #222226;
-  --color-border: #27272a;
-  --color-border-subtle: #1f1f23;
-  --color-border-focus: #52525b;
+  --color-canvas: #ffffff;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f9fafb;
+  --color-surface-3: #eff6ff;
+  --color-border: #e5e7eb;
+  --color-border-subtle: #f3f4f6;
+  --color-border-focus: #2563eb;
 
-  --color-text-main: #f4f4f5;
-  --color-text-muted: #a1a1aa;
-  --color-text-dim: #71717a;
+  --color-text-main: #111827;
+  --color-text-muted: #4b5563;
+  --color-text-dim: #6b7280;
 
-  --color-accent-emerald: #10b981;
-  --color-accent-amber: #f59e0b;
-  --color-accent-rose: #f43f5e;
-  --color-accent-blue: #3b82f6;
+  --color-accent-red: #b91c1c;
+  --color-accent-blue: #1d4ed8;
+  --color-accent-emerald: #15803d;
+  --color-accent-amber: #b45309;
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -32,8 +32,8 @@
 
 body {
   margin: 0;
-  background-color: #09090b;
-  color: #f4f4f5;
+  background-color: #ffffff;
+  color: #111827;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
@@ -46,14 +46,14 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: #ffffff;
 }
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: #d1d5db;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: #9ca3af;
 }
 
 /* Print Isolation Styles for Court Report */
