@@ -19,6 +19,7 @@ from src.gateway.config import GatewayConfig
 from src.gateway.media import MediaValidationError, store_path_once, store_stream_once
 from src.gateway.models import CapabilitiesResponse, InvestigationResponse
 from src.gateway.orchestrator import UnifiedInvestigationOrchestrator, new_investigation_id
+from src.api.standalone_routes import router as standalone_router
 
 app = FastAPI(
     title="Chandigarh Police Hackathon Section 2 Forensic Gateway",
@@ -41,6 +42,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+app.include_router(standalone_router)
 
 # In-memory case cache for demonstration
 cases_db: Dict[str, Any] = {}
